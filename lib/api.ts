@@ -38,6 +38,21 @@ export async function fetchNearestAirport(
   }
 }
 
+export async function fetchAirport(
+  code: string
+): Promise<{ iata: string; name: string; lat: number; lng: number } | null> {
+  try {
+    const res = await fetch(
+      `${API_URL}/api/airports/${encodeURIComponent(code)}`,
+      { signal: AbortSignal.timeout(5000) }
+    );
+    if (!res.ok) return null;
+    return res.json();
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchTrack(
   icao24: string,
   signal?: AbortSignal

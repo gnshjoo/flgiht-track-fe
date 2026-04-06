@@ -35,4 +35,6 @@ export interface TrackResponse {
   icao24: string;
   callsign: string;
   path: TrackWaypoint[];
+  estDepartureAirport: string | null;
+  estArrivalAirport: string | null;
 }

@@ -2,15 +2,25 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --bg-primary: #f8fafc;
+  --bg-map: #e2e8f0;
+}
+
+.dark {
+  --bg-primary: #0a0a1a;
+  --bg-map: #0a0e1a;
+}
+
 body {
-  background: #0a0a1a;
+  background: var(--bg-primary);
   color: #ffffff;
   overflow: hidden;
 }
 
 @layer components {
   .glass {
-    @apply bg-white/[0.12] backdrop-blur-xl border border-white/[0.12] rounded-2xl;
+    @apply bg-black/[0.06] dark:bg-white/[0.12] backdrop-blur-xl border border-black/[0.08] dark:border-white/[0.12] rounded-2xl;
   }
 }
 

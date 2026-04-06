@@ -3,13 +3,14 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import dynamic from "next/dynamic";
 import { AircraftState, TrackWaypoint } from "@/lib/types";
-import { fetchAircraft, fetchTrack, fetchNearestAirport } from "@/lib/api";
+import { fetchAircraft, fetchTrack, fetchAirport } from "@/lib/api";
+import ThemeToggle from "@/components/ThemeToggle";
 
 const TrackingMap = dynamic(() => import("@/components/TrackingGlobe"), {
   ssr: false,
   loading: () => (
-    <div className="w-full h-full flex items-center justify-center bg-[#0a0e1a]">
-      <div className="text-cyan-400 text-sm animate-pulse">Loading map...</div>
+    <div className="w-full h-full flex items-center justify-center bg-slate-200 dark:bg-[#0a0e1a]">
+      <div className="text-cyan-600 dark:text-cyan-400 text-sm animate-pulse">Loading map...</div>
     </div>
   ),
 });
@@ -32,6 +33,7 @@ export default function TrackingPage() {
   const [count, setCount] = useState(0);
   const [departureAirport, setDepartureAirport] = useState<string | null>(null);
   const [arrivalAirport, setArrivalAirport] = useState<string | null>(null);
+  const [arrivalCoords, setArrivalCoords] = useState<{ lat: number; lng: number } | null>(null);
   const fetchRef = useRef<AbortController | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const boundsRef = useRef<Bounds | null>(null);
@@ -72,6 +74,7 @@ export default function TrackingPage() {
     setSelected(ac);
     setDepartureAirport(null);
     setArrivalAirport(null);
+    setArrivalCoords(null);
     if (!ac) {
       setTrackPath([]);
       return;
@@ -80,18 +83,13 @@ export default function TrackingPage() {
     try {
       const track = await fetchTrack(ac.icao24);
       setTrackPath(track.path);
-
-      // Lookup nearest airports for departure & current position
-      const airborne = track.path.filter((wp) => !wp.onGround);
-      if (airborne.length >= 1) {
-        const dep = airborne[0];
-        fetchNearestAirport(dep.latitude, dep.longitude).then((a) =>
-          setDepartureAirport(a ? a.iata : null)
-        );
-        const cur = airborne[airborne.length - 1];
-        fetchNearestAirport(cur.latitude, cur.longitude).then((a) =>
-          setArrivalAirport(a ? a.iata : null)
-        );
+      setDepartureAirport(track.estDepartureAirport ?? null);
+      setArrivalAirport(track.estArrivalAirport ?? null);
+      // 도착 공항 좌표 조회
+      if (track.estArrivalAirport) {
+        fetchAirport(track.estArrivalAirport).then((airport) => {
+          if (airport) setArrivalCoords({ lat: airport.lat, lng: airport.lng });
+        });
       }
     } catch {
       setTrackPath([]);
@@ -106,12 +104,13 @@ export default function TrackingPage() {
   const currentWp = airborne.length > 0 ? airborne[airborne.length - 1] : null;
 
   return (
-    <main className="relative w-screen h-screen overflow-hidden bg-[#0a0e1a]">
-      {/* App title */}
-      <div className="absolute top-6 left-6 z-[1000]">
-        <span className="text-white/60 text-sm font-medium tracking-wide">
+    <main className="relative w-screen h-screen overflow-hidden bg-slate-50 dark:bg-[#0a0e1a]">
+      {/* App title + theme toggle */}
+      <div className="absolute top-6 left-6 z-[1000] flex items-center gap-3">
+        <span className="text-slate-500 dark:text-white/60 text-sm font-medium tracking-wide">
           Flight Tracker
         </span>
+        <ThemeToggle />
       </div>
 
       <TrackingMap
@@ -120,42 +119,45 @@ export default function TrackingPage() {
         selectedIcao={selected?.icao24 ?? null}
         onSelectAircraft={handleSelect}
         onBoundsChange={handleBoundsChange}
+        departureAirport={departureAirport}
+        arrivalAirport={arrivalAirport}
+        arrivalCoords={arrivalCoords}
       />
 
       {/* --- Bottom stats bar --- */}
       <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-[1000]">
-        <div className="flex items-center gap-4 bg-black/60 backdrop-blur-md px-4 py-2 rounded-lg text-xs border border-white/5">
+        <div className="flex items-center gap-4 bg-white/70 dark:bg-black/60 backdrop-blur-md px-4 py-2 rounded-lg text-xs border border-black/10 dark:border-white/5">
           <div className="flex items-center gap-1.5">
             <div
               className="w-2 h-2 rounded-full"
               style={{ backgroundColor: "#22d3ee", boxShadow: "0 0 6px #22d3ee" }}
             />
-            <span className="text-gray-300">{count.toLocaleString()} aircraft</span>
+            <span className="text-slate-600 dark:text-gray-300">{count.toLocaleString()} aircraft</span>
           </div>
-          {loading && <span className="text-cyan-400 animate-pulse">loading...</span>}
-          {lastUpdate && !loading && <span className="text-gray-500">{lastUpdate}</span>}
-          {error && <span className="text-red-400">{error}</span>}
+          {loading && <span className="text-cyan-600 dark:text-cyan-400 animate-pulse">loading...</span>}
+          {lastUpdate && !loading && <span className="text-slate-400 dark:text-gray-500">{lastUpdate}</span>}
+          {error && <span className="text-red-500 dark:text-red-400">{error}</span>}
         </div>
       </div>
 
       {/* --- Aircraft detail panel --- */}
       {selected && (
         <div className="absolute top-16 right-3 z-[1000] w-[340px] max-h-[calc(100vh-5rem)] overflow-y-auto scrollbar-thin">
-          <div className="bg-gray-900/90 backdrop-blur-md rounded-xl border border-white/10 shadow-2xl">
+          <div className="bg-white/90 dark:bg-gray-900/90 backdrop-blur-md rounded-xl border border-black/10 dark:border-white/10 shadow-2xl">
             {/* Header */}
-            <div className="p-4 pb-3 border-b border-white/10">
+            <div className="p-4 pb-3 border-b border-black/10 dark:border-white/10">
               <div className="flex items-start justify-between">
                 <div>
-                  <h3 className="text-amber-400 font-bold text-xl font-mono leading-tight">
+                  <h3 className="text-amber-500 dark:text-amber-400 font-bold text-xl font-mono leading-tight">
                     {selected.callsign || selected.icao24}
                   </h3>
-                  <p className="text-gray-400 text-sm mt-0.5">
+                  <p className="text-slate-500 dark:text-gray-400 text-sm mt-0.5">
                     ICAO {selected.icao24} · {selected.originCountry}
                   </p>
                 </div>
                 <button
                   onClick={() => handleSelect(null)}
-                  className="text-gray-500 hover:text-white transition-colors text-2xl leading-none ml-2 -mt-1"
+                  className="text-slate-400 dark:text-gray-500 hover:text-slate-900 dark:hover:text-white transition-colors text-2xl leading-none ml-2 -mt-1"
                 >
                   ×
                 </button>
@@ -163,7 +165,7 @@ export default function TrackingPage() {
             </div>
 
             {/* Aircraft Info */}
-            <div className="p-4 border-b border-white/10">
+            <div className="p-4 border-b border-black/10 dark:border-white/10">
               <SectionTitle>Aircraft Info</SectionTitle>
               <div className="grid grid-cols-2 gap-x-4 gap-y-3 mt-2">
                 {selected.altitude != null && (
@@ -198,7 +200,7 @@ export default function TrackingPage() {
 
             {/* Track info */}
             {trackLoading && (
-              <div className="p-4 text-center text-sm text-cyan-400 animate-pulse">
+              <div className="p-4 text-center text-sm text-cyan-600 dark:text-cyan-400 animate-pulse">
                 Loading flight path...
               </div>
             )}
@@ -208,29 +210,29 @@ export default function TrackingPage() {
                 {/* Route summary: DEP → ARR */}
                 <div className="flex items-center justify-center gap-3">
                   <div className="text-center">
-                    <div className="text-amber-400 font-bold text-lg font-mono">
+                    <div className="text-amber-500 dark:text-amber-400 font-bold text-lg font-mono">
                       {departureAirport || "---"}
                     </div>
-                    <div className="text-gray-500 text-xs">Departure</div>
+                    <div className="text-slate-400 dark:text-gray-500 text-xs">Departure</div>
                   </div>
-                  <div className="flex items-center gap-1 text-gray-500">
-                    <div className="w-8 h-px bg-gray-600" />
+                  <div className="flex items-center gap-1 text-slate-400 dark:text-gray-500">
+                    <div className="w-8 h-px bg-slate-300 dark:bg-gray-600" />
                     <span className="text-base">✈</span>
-                    <div className="w-8 h-px bg-gray-600" />
+                    <div className="w-8 h-px bg-slate-300 dark:bg-gray-600" />
                   </div>
                   <div className="text-center">
-                    <div className="text-cyan-400 font-bold text-lg font-mono">
+                    <div className="text-cyan-500 dark:text-cyan-400 font-bold text-lg font-mono">
                       {arrivalAirport || "---"}
                     </div>
-                    <div className="text-gray-500 text-xs">Nearest Dest.</div>
+                    <div className="text-slate-400 dark:text-gray-500 text-xs">Arrival</div>
                   </div>
                 </div>
 
                 {/* Departure detail */}
-                <div className="border border-white/5 rounded-lg p-3 bg-white/[0.02]">
+                <div className="border border-black/5 dark:border-white/5 rounded-lg p-3 bg-black/[0.02] dark:bg-white/[0.02]">
                   <div className="flex items-center gap-2 mb-2">
-                    <div className="w-2.5 h-2.5 rounded-full bg-amber-400 shrink-0" />
-                    <span className="text-amber-400 font-semibold text-sm">
+                    <div className="w-2.5 h-2.5 rounded-full bg-amber-500 dark:bg-amber-400 shrink-0" />
+                    <span className="text-amber-500 dark:text-amber-400 font-semibold text-sm">
                       Departed {departureAirport ? `(${departureAirport})` : ""}
                     </span>
                   </div>
@@ -255,10 +257,10 @@ export default function TrackingPage() {
                 </div>
 
                 {/* Current position detail */}
-                <div className="border border-white/5 rounded-lg p-3 bg-white/[0.02]">
+                <div className="border border-black/5 dark:border-white/5 rounded-lg p-3 bg-black/[0.02] dark:bg-white/[0.02]">
                   <div className="flex items-center gap-2 mb-2">
-                    <div className="w-2.5 h-2.5 rounded-full bg-cyan-400 shrink-0" />
-                    <span className="text-cyan-400 font-semibold text-sm">
+                    <div className="w-2.5 h-2.5 rounded-full bg-cyan-500 dark:bg-cyan-400 shrink-0" />
+                    <span className="text-cyan-500 dark:text-cyan-400 font-semibold text-sm">
                       Current Position
                     </span>
                   </div>
@@ -294,29 +296,29 @@ export default function TrackingPage() {
                     {airborne.map((wp, i) => (
                       <div
                         key={i}
-                        className="flex items-center text-xs gap-2 px-2 py-1.5 rounded hover:bg-white/5 transition-colors"
+                        className="flex items-center text-xs gap-2 px-2 py-1.5 rounded hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
                       >
-                        <span className="text-gray-600 w-5 text-right shrink-0 font-mono">
+                        <span className="text-slate-400 dark:text-gray-600 w-5 text-right shrink-0 font-mono">
                           {i + 1}
                         </span>
                         <div
                           className={`w-1.5 h-1.5 rounded-full shrink-0 ${
                             i === 0
-                              ? "bg-amber-400"
+                              ? "bg-amber-500 dark:bg-amber-400"
                               : i === airborne.length - 1
-                                ? "bg-cyan-400"
-                                : "bg-gray-600"
+                                ? "bg-cyan-500 dark:bg-cyan-400"
+                                : "bg-slate-300 dark:bg-gray-600"
                           }`}
                         />
-                        <span className="text-gray-300 font-mono">
+                        <span className="text-slate-600 dark:text-gray-300 font-mono">
                           {wp.latitude.toFixed(3)}, {wp.longitude.toFixed(3)}
                         </span>
                         {wp.altitude != null && (
-                          <span className="text-gray-500 ml-auto">
+                          <span className="text-slate-400 dark:text-gray-500 ml-auto">
                             {Math.round(wp.altitude).toLocaleString()}m
                           </span>
                         )}
-                        <span className="text-gray-600 text-[10px]">
+                        <span className="text-slate-400 dark:text-gray-600 text-[10px]">
                           {new Date(wp.time * 1000).toLocaleTimeString([], {
                             hour: "2-digit",
                             minute: "2-digit",
@@ -330,7 +332,7 @@ export default function TrackingPage() {
             )}
 
             {trackPath.length === 0 && !trackLoading && (
-              <div className="p-4 text-center text-sm text-gray-600">
+              <div className="p-4 text-center text-sm text-slate-400 dark:text-gray-600">
                 No track data available.
               </div>
             )}
@@ -345,7 +347,7 @@ export default function TrackingPage() {
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
-    <div className="text-[11px] text-gray-500 font-semibold uppercase tracking-wider">
+    <div className="text-[11px] text-slate-400 dark:text-gray-500 font-semibold uppercase tracking-wider">
       {children}
     </div>
   );
@@ -362,10 +364,10 @@ function InfoCell({
 }) {
   return (
     <div>
-      <div className="text-gray-500 text-[11px] uppercase tracking-wide">{label}</div>
-      <div className="text-white font-medium text-sm">
+      <div className="text-slate-400 dark:text-gray-500 text-[11px] uppercase tracking-wide">{label}</div>
+      <div className="text-slate-900 dark:text-white font-medium text-sm">
         {value}
-        {sub && <span className="text-gray-500 ml-1 font-normal text-xs">{sub}</span>}
+        {sub && <span className="text-slate-400 dark:text-gray-500 ml-1 font-normal text-xs">{sub}</span>}
       </div>
     </div>
   );
@@ -374,8 +376,8 @@ function InfoCell({
 function InfoMini({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <div className="text-gray-600 text-[10px]">{label}</div>
-      <div className="text-gray-300 text-xs">{value}</div>
+      <div className="text-slate-400 dark:text-gray-600 text-[10px]">{label}</div>
+      <div className="text-slate-600 dark:text-gray-300 text-xs">{value}</div>
     </div>
   );
 }

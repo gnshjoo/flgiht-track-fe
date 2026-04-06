@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useCallback } from "react";
-import type { Map as LeafletMap, LayerGroup } from "leaflet";
+import type { Map as LeafletMap, LayerGroup, TileLayer } from "leaflet";
 import { AircraftState, TrackWaypoint } from "@/lib/types";
+import { useTheme } from "@/lib/theme-context";
 
 interface Props {
   aircraft: AircraftState[];
@@ -15,6 +16,9 @@ interface Props {
     lamax: number;
     lomax: number;
   }) => void;
+  departureAirport: string | null;
+  arrivalAirport: string | null;
+  arrivalCoords: { lat: number; lng: number } | null;
 }
 
 export default function TrackingMap({
@@ -23,16 +27,28 @@ export default function TrackingMap({
   selectedIcao,
   onSelectAircraft,
   onBoundsChange,
+  departureAirport,
+  arrivalAirport,
+  arrivalCoords,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<LeafletMap | null>(null);
   const LRef = useRef<typeof import("leaflet") | null>(null);
   const planeLayerRef = useRef<LayerGroup | null>(null);
   const trackLayerRef = useRef<LayerGroup | null>(null);
+  const tileLayerRef = useRef<TileLayer | null>(null);
+  const { theme } = useTheme();
   const onSelectRef = useRef(onSelectAircraft);
   onSelectRef.current = onSelectAircraft;
   const onBoundsRef = useRef(onBoundsChange);
   onBoundsRef.current = onBoundsChange;
+  const isFlyingRef = useRef(false);
+  const depAirportRef = useRef(departureAirport);
+  depAirportRef.current = departureAirport;
+  const arrAirportRef = useRef(arrivalAirport);
+  arrAirportRef.current = arrivalAirport;
+  const arrCoordsRef = useRef(arrivalCoords);
+  arrCoordsRef.current = arrivalCoords;
 
   // Emit current bounds
   const emitBounds = useCallback(() => {
@@ -75,7 +91,9 @@ export default function TrackingMap({
         s.id = "plane-pulse-css";
         s.textContent = `
           @keyframes plane-pulse{0%,100%{box-shadow:0 0 0 0 rgba(251,191,36,.45)}50%{box-shadow:0 0 0 10px rgba(251,191,36,0)}}
-          .leaflet-container{background:#0a0e1a!important}
+          .leaflet-container{background:var(--bg-map)!important}
+          .plane-tooltip{background:#fbbf24!important;color:#000!important;border:none!important;border-radius:6px!important;padding:4px 10px!important;font-size:12px!important;font-weight:700!important;font-family:monospace!important;box-shadow:0 2px 10px rgba(251,191,36,.5)!important}
+          .plane-tooltip::before{border-top-color:#fbbf24!important}
         `;
         document.head.appendChild(s);
       }
@@ -93,7 +111,7 @@ export default function TrackingMap({
         worldCopyJump: true,
       });
 
-      L.tileLayer(
+      tileLayerRef.current = L.tileLayer(
         "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
         { subdomains: "abcd", maxZoom: 19 }
       ).addTo(map);
@@ -111,13 +129,34 @@ export default function TrackingMap({
       };
 
       map.whenReady(() => debouncedEmit());
-      map.on("moveend", () => debouncedEmit());
+      map.on("moveend", () => {
+        if (!isFlyingRef.current) debouncedEmit();
+      });
     })();
 
     return () => {
       cancelled = true;
     };
   }, [emitBounds]);
+
+  // --- Swap tile layer on theme change ---
+  useEffect(() => {
+    const L = LRef.current;
+    const map = mapRef.current;
+    if (!L || !map) return;
+
+    if (tileLayerRef.current) {
+      map.removeLayer(tileLayerRef.current);
+    }
+    const url =
+      theme === "dark"
+        ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+        : "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png";
+    tileLayerRef.current = L.tileLayer(url, {
+      subdomains: "abcd",
+      maxZoom: 19,
+    }).addTo(map);
+  }, [theme]);
 
   // --- Draw aircraft ---
   useEffect(() => {
@@ -127,10 +166,15 @@ export default function TrackingMap({
 
     layer.clearLayers();
 
-    aircraft.forEach((ac) => {
+    // 선택된 비행기가 있으면 해당 비행기만 표시
+    const visible = selectedIcao
+      ? aircraft.filter((ac) => ac.icao24 === selectedIcao)
+      : aircraft;
+
+    visible.forEach((ac) => {
       const sel = ac.icao24 === selectedIcao;
       const color = sel ? "#fbbf24" : "#22d3ee";
-      const sz = sel ? 26 : 16;
+      const sz = sel ? 38 : 28;
       const glow = sel
         ? "drop-shadow(0 0 4px #fbbf24) drop-shadow(0 0 10px #fbbf24)"
         : "drop-shadow(0 0 2px #22d3ee)";
@@ -144,7 +188,7 @@ export default function TrackingMap({
         html = svg;
       }
 
-      const total = sel ? 38 : sz;
+      const total = sel ? 52 : sz;
       const icon = L.divIcon({
         className: "",
         iconSize: [total, total],
@@ -157,12 +201,25 @@ export default function TrackingMap({
         zIndexOffset: sel ? 1000 : 0,
       });
 
-      m.on("click", () => onSelectRef.current(ac));
+      m.bindTooltip(ac.callsign?.trim() || ac.icao24, {
+        direction: "top",
+        offset: L.point(0, -total / 2),
+        className: "plane-tooltip",
+      });
+
+      m.on("click", () => {
+        // 이미 선택된 비행기를 다시 클릭하면 선택 해제
+        if (ac.icao24 === selectedIcao) {
+          onSelectRef.current(null);
+        } else {
+          onSelectRef.current(ac);
+        }
+      });
       layer.addLayer(m);
     });
   }, [aircraft, selectedIcao]);
 
-  // --- Draw track + labels ---
+  // --- Draw track + labels (single unified effect) ---
   useEffect(() => {
     const L = LRef.current;
     const layer = trackLayerRef.current;
@@ -170,14 +227,35 @@ export default function TrackingMap({
 
     layer.clearLayers();
 
-    const airborne = trackPath.filter((wp) => !wp.onGround);
+    // 시간순 정렬 + 중복 제거
+    const airborne = trackPath
+      .filter((wp) => !wp.onGround)
+      .sort((a, b) => a.time - b.time)
+      .filter((wp, i, arr) =>
+        i === 0 || wp.latitude !== arr[i - 1].latitude || wp.longitude !== arr[i - 1].longitude
+      );
     if (airborne.length < 2) return;
 
+    // Unwrap longitudes across the antimeridian (e.g. ICN→LAX via Pacific)
+    const unwrappedLngs: number[] = [];
+    for (let i = 0; i < airborne.length; i++) {
+      if (i === 0) {
+        unwrappedLngs.push(airborne[i].longitude);
+      } else {
+        const prev = unwrappedLngs[i - 1];
+        let cur = airborne[i].longitude;
+        let diff = cur - prev;
+        while (diff > 180) { cur -= 360; diff = cur - prev; }
+        while (diff < -180) { cur += 360; diff = cur - prev; }
+        unwrappedLngs.push(cur);
+      }
+    }
+
     const latlngs = airborne.map(
-      (wp) => L.latLng(wp.latitude, wp.longitude)
+      (wp, i) => L.latLng(wp.latitude, unwrappedLngs[i])
     );
 
-    // Glow
+    // Traveled path - Glow
     L.polyline(latlngs, {
       color: "#fbbf24",
       weight: 7,
@@ -186,7 +264,7 @@ export default function TrackingMap({
       lineJoin: "round",
     }).addTo(layer);
 
-    // Main dashed line
+    // Traveled path - Main dashed line
     L.polyline(latlngs, {
       color: "#fbbf24",
       weight: 3,
@@ -201,41 +279,94 @@ export default function TrackingMap({
     L.marker([dep.latitude, dep.longitude], {
       icon: L.divIcon({
         className: "",
-        iconSize: [100, 30],
-        iconAnchor: [50, 40],
-        html: `<div style="background:#f59e0b;color:#000;font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;white-space:nowrap;box-shadow:0 2px 8px rgba(245,158,11,.5);text-align:center">▲ Departed</div>`,
+        iconSize: [120, 30],
+        iconAnchor: [60, 40],
+        html: `<div style="background:#f59e0b;color:#000;font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;white-space:nowrap;box-shadow:0 2px 8px rgba(245,158,11,.5);text-align:center">▲ Departure${departureAirport ? ` (${departureAirport})` : ""}</div>`,
       }),
       interactive: false,
       zIndexOffset: 900,
     }).addTo(layer);
 
-    // Current marker
+    // 현재 위치 → 도착 공항 예상 경로 (연하게)
     const cur = airborne[airborne.length - 1];
-    L.marker([cur.latitude, cur.longitude], {
-      icon: L.divIcon({
-        className: "",
-        iconSize: [90, 30],
-        iconAnchor: [45, 40],
-        html: `<div style="background:#06b6d4;color:#000;font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;white-space:nowrap;box-shadow:0 2px 8px rgba(6,182,212,.5);text-align:center">● Current</div>`,
-      }),
-      interactive: false,
-      zIndexOffset: 900,
-    }).addTo(layer);
+    if (arrivalCoords) {
+      const lastUnwrappedLng = unwrappedLngs[unwrappedLngs.length - 1];
+      let arrLng = arrivalCoords.lng;
+      let diff = arrLng - lastUnwrappedLng;
+      while (diff > 180) { arrLng -= 360; diff = arrLng - lastUnwrappedLng; }
+      while (diff < -180) { arrLng += 360; diff = arrLng - lastUnwrappedLng; }
+
+      const projectedLatLngs = [
+        L.latLng(cur.latitude, lastUnwrappedLng),
+        L.latLng(arrivalCoords.lat, arrLng),
+      ];
+
+      // Projected route - Glow (faint)
+      L.polyline(projectedLatLngs, {
+        color: "#06b6d4",
+        weight: 5,
+        opacity: 0.1,
+        lineCap: "round",
+        lineJoin: "round",
+      }).addTo(layer);
+
+      // Projected route - Dashed line (faint)
+      L.polyline(projectedLatLngs, {
+        color: "#06b6d4",
+        weight: 2,
+        opacity: 0.4,
+        dashArray: "6 8",
+        lineCap: "round",
+        lineJoin: "round",
+      }).addTo(layer);
+
+      // Arrival airport marker
+      L.marker([arrivalCoords.lat, arrLng], {
+        icon: L.divIcon({
+          className: "",
+          iconSize: [120, 30],
+          iconAnchor: [60, 40],
+          html: `<div style="background:#06b6d4;color:#000;font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;white-space:nowrap;box-shadow:0 2px 8px rgba(6,182,212,.5);text-align:center">● Arrival${arrivalAirport ? ` (${arrivalAirport})` : ""}</div>`,
+        }),
+        interactive: false,
+        zIndexOffset: 900,
+      }).addTo(layer);
+    } else {
+      // 도착 좌표 없을 때 현재 위치 마커
+      L.marker([cur.latitude, cur.longitude], {
+        icon: L.divIcon({
+          className: "",
+          iconSize: [120, 30],
+          iconAnchor: [60, 40],
+          html: `<div style="background:#06b6d4;color:#000;font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;white-space:nowrap;box-shadow:0 2px 8px rgba(6,182,212,.5);text-align:center">● Current${arrivalAirport ? ` (→${arrivalAirport})` : ""}</div>`,
+        }),
+        interactive: false,
+        zIndexOffset: 900,
+      }).addTo(layer);
+    }
 
     // Fly map to track bounds
-    const bounds = L.latLngBounds(latlngs);
-    mapRef.current?.flyToBounds(bounds, {
-      padding: [80, 80],
-      maxZoom: 8,
-      duration: 1,
-    });
-  }, [trackPath]);
+    isFlyingRef.current = true;
+    const allLatLngs = arrivalCoords
+      ? [...latlngs, L.latLng(arrivalCoords.lat, arrivalCoords.lng)]
+      : latlngs;
+    const bounds = L.latLngBounds(allLatLngs);
+    const map = mapRef.current;
+    if (map) {
+      map.flyToBounds(bounds, {
+        padding: [80, 80],
+        maxZoom: 8,
+        duration: 1,
+      });
+      setTimeout(() => { isFlyingRef.current = false; }, 1200);
+    }
+  }, [trackPath, arrivalCoords, departureAirport, arrivalAirport]);
 
   return (
     <div
       ref={containerRef}
       className="w-full h-full absolute inset-0"
-      style={{ background: "#0a0e1a" }}
+      style={{ background: "var(--bg-map)" }}
     />
   );
 }
