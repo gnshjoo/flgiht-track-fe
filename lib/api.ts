@@ -1,6 +1,6 @@
 import { AircraftResponse, TrackResponse } from "./types";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
 export async function fetchAircraft(
   bounds?: { lamin: number; lomin: number; lamax: number; lomax: number },
