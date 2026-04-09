@@ -171,24 +171,29 @@ export default function TrackingMap({
       ? aircraft.filter((ac) => ac.icao24 === selectedIcao)
       : aircraft;
 
+    const isMobile = window.matchMedia("(max-width: 768px)").matches;
+
     visible.forEach((ac) => {
       const sel = ac.icao24 === selectedIcao;
       const color = sel ? "#fbbf24" : "#22d3ee";
-      const sz = sel ? 38 : 28;
+      const sz = sel ? 38 : isMobile ? 32 : 28;
       const glow = sel
         ? "drop-shadow(0 0 4px #fbbf24) drop-shadow(0 0 10px #fbbf24)"
         : "drop-shadow(0 0 2px #22d3ee)";
 
       const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${sz}" height="${sz}" viewBox="0 0 24 24" fill="${color}" style="transform:rotate(${ac.heading ?? 0}deg);filter:${glow}"><path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/></svg>`;
 
+      // Wrap in a larger touch target on mobile
       let html: string;
       if (sel) {
         html = `<div style="border:2px solid #fbbf24;border-radius:50%;padding:4px;background:rgba(251,191,36,.15);display:inline-flex;align-items:center;justify-content:center;animation:plane-pulse 1.5s ease-in-out infinite">${svg}</div>`;
+      } else if (isMobile) {
+        html = `<div style="padding:8px;display:inline-flex;align-items:center;justify-content:center">${svg}</div>`;
       } else {
         html = svg;
       }
 
-      const total = sel ? 52 : sz;
+      const total = sel ? 52 : isMobile ? 48 : sz;
       const icon = L.divIcon({
         className: "",
         iconSize: [total, total],
@@ -201,11 +206,13 @@ export default function TrackingMap({
         zIndexOffset: sel ? 1000 : 0,
       });
 
-      m.bindTooltip(ac.callsign?.trim() || ac.icao24, {
-        direction: "top",
-        offset: L.point(0, -total / 2),
-        className: "plane-tooltip",
-      });
+      if (!isMobile) {
+        m.bindTooltip(ac.callsign?.trim() || ac.icao24, {
+          direction: "top",
+          offset: L.point(0, -total / 2),
+          className: "plane-tooltip",
+        });
+      }
 
       m.on("click", () => {
         // 이미 선택된 비행기를 다시 클릭하면 선택 해제
@@ -353,8 +360,10 @@ export default function TrackingMap({
     const bounds = L.latLngBounds(allLatLngs);
     const map = mapRef.current;
     if (map) {
+      const isMobileFly = window.matchMedia("(max-width: 768px)").matches;
       map.flyToBounds(bounds, {
-        padding: [80, 80],
+        padding: isMobileFly ? [40, 40] : [80, 80],
+        paddingBottomRight: isMobileFly ? [40, window.innerHeight * 0.6] : [80, 80],
         maxZoom: 8,
         duration: 1,
       });

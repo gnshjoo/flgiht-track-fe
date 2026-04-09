@@ -106,7 +106,7 @@ export default function TrackingPage() {
   return (
     <main className="relative w-screen h-screen overflow-hidden bg-slate-50 dark:bg-[#0a0e1a]">
       {/* App title + theme toggle */}
-      <div className="absolute top-6 left-6 z-[1000] flex items-center gap-3">
+      <div className="absolute top-3 left-3 md:top-6 md:left-6 z-[1000] flex items-center gap-2 md:gap-3">
         <span className="text-slate-500 dark:text-white/60 text-sm font-medium tracking-wide">
           Flight Tracker
         </span>
@@ -125,8 +125,8 @@ export default function TrackingPage() {
       />
 
       {/* --- Bottom stats bar --- */}
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-[1000]">
-        <div className="flex items-center gap-4 bg-white/70 dark:bg-black/60 backdrop-blur-md px-4 py-2 rounded-lg text-xs border border-black/10 dark:border-white/5">
+      <div className={`absolute left-1/2 -translate-x-1/2 z-[1000] transition-all ${selected ? "bottom-[62vh] md:bottom-4" : "bottom-4"}`}>
+        <div className="flex items-center gap-3 md:gap-4 bg-white/70 dark:bg-black/60 backdrop-blur-md px-3 md:px-4 py-2 rounded-lg text-xs border border-black/10 dark:border-white/5">
           <div className="flex items-center gap-1.5">
             <div
               className="w-2 h-2 rounded-full"
@@ -135,15 +135,19 @@ export default function TrackingPage() {
             <span className="text-slate-600 dark:text-gray-300">{count.toLocaleString()} aircraft</span>
           </div>
           {loading && <span className="text-cyan-600 dark:text-cyan-400 animate-pulse">loading...</span>}
-          {lastUpdate && !loading && <span className="text-slate-400 dark:text-gray-500">{lastUpdate}</span>}
+          {lastUpdate && !loading && <span className="text-slate-400 dark:text-gray-500 hidden sm:inline">{lastUpdate}</span>}
           {error && <span className="text-red-500 dark:text-red-400">{error}</span>}
         </div>
       </div>
 
       {/* --- Aircraft detail panel --- */}
       {selected && (
-        <div className="absolute top-16 right-3 z-[1000] w-[340px] max-h-[calc(100vh-5rem)] overflow-y-auto scrollbar-thin">
-          <div className="bg-white/90 dark:bg-gray-900/90 backdrop-blur-md rounded-xl border border-black/10 dark:border-white/10 shadow-2xl">
+        <div className="absolute z-[1000] bottom-0 left-0 right-0 max-h-[60vh] overflow-y-auto scrollbar-thin md:bottom-auto md:left-auto md:top-16 md:right-3 md:w-[340px] md:max-h-[calc(100vh-5rem)] md:rounded-xl rounded-t-xl">
+          <div className="bg-white/95 dark:bg-gray-900/95 backdrop-blur-md md:rounded-xl rounded-t-xl border border-black/10 dark:border-white/10 shadow-2xl">
+            {/* Drag handle (mobile) */}
+            <div className="flex justify-center pt-2 pb-0 md:hidden">
+              <div className="w-10 h-1 rounded-full bg-slate-300 dark:bg-gray-600" />
+            </div>
             {/* Header */}
             <div className="p-4 pb-3 border-b border-black/10 dark:border-white/10">
               <div className="flex items-start justify-between">
@@ -157,7 +161,7 @@ export default function TrackingPage() {
                 </div>
                 <button
                   onClick={() => handleSelect(null)}
-                  className="text-slate-400 dark:text-gray-500 hover:text-slate-900 dark:hover:text-white transition-colors text-2xl leading-none ml-2 -mt-1"
+                  className="text-slate-400 dark:text-gray-500 hover:text-slate-900 dark:hover:text-white transition-colors text-2xl leading-none ml-2 -mt-1 p-1 min-w-[44px] min-h-[44px] flex items-center justify-center"
                 >
                   ×
                 </button>
