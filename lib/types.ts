@@ -38,3 +38,14 @@ export interface TrackResponse {
   estDepartureAirport: string | null;
   estArrivalAirport: string | null;
 }
+
+export interface AircraftInfo {
+  icao24: string;
+  registration: string | null;
+  manufacturerName: string | null;
+  model: string | null;
+  operator: string | null;
+  owner: string | null;
+  built: string | null;
+  categoryDescription: string | null;
+}

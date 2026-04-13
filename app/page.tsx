@@ -2,8 +2,8 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import dynamic from "next/dynamic";
-import { AircraftState, TrackWaypoint } from "@/lib/types";
-import { fetchAircraft, fetchTrack, fetchAirport } from "@/lib/api";
+import { AircraftInfo, AircraftState, TrackWaypoint } from "@/lib/types";
+import { fetchAircraft, fetchAircraftByCallsign, fetchAircraftInfo, fetchTrack, fetchAirport } from "@/lib/api";
 import ThemeToggle from "@/components/ThemeToggle";
 
 const TrackingMap = dynamic(() => import("@/components/TrackingGlobe"), {
@@ -34,6 +34,10 @@ export default function TrackingPage() {
   const [departureAirport, setDepartureAirport] = useState<string | null>(null);
   const [arrivalAirport, setArrivalAirport] = useState<string | null>(null);
   const [arrivalCoords, setArrivalCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchMode, setSearchMode] = useState(false);
+  const [aircraftInfo, setAircraftInfo] = useState<AircraftInfo | null>(null);
+  const [infoLoading, setInfoLoading] = useState(false);
   const fetchRef = useRef<AbortController | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const boundsRef = useRef<Bounds | null>(null);
@@ -57,6 +61,32 @@ export default function TrackingPage() {
     }
   }, []);
 
+  // Search by callsign
+  const handleSearch = useCallback(async (query: string) => {
+    if (!query.trim()) {
+      setSearchMode(false);
+      if (boundsRef.current) loadForBounds(boundsRef.current);
+      return;
+    }
+    fetchRef.current?.abort();
+    const ctrl = new AbortController();
+    fetchRef.current = ctrl;
+    try {
+      setLoading(true);
+      setSearchMode(true);
+      if (timerRef.current) clearInterval(timerRef.current);
+      const data = await fetchAircraftByCallsign(query.trim(), ctrl.signal);
+      setAircraft(data.aircraft);
+      setCount(data.aircraft.length);
+      setLastUpdate(new Date().toLocaleTimeString());
+      setError(null);
+    } catch (e: any) {
+      if (e?.name !== "AbortError") setError("Search failed.");
+    } finally {
+      setLoading(false);
+    }
+  }, [loadForBounds]);
+
   const handleBoundsChange = useCallback(
     (bounds: Bounds) => {
       boundsRef.current = bounds;
@@ -69,23 +99,24 @@ export default function TrackingPage() {
     [loadForBounds]
   );
 
-  // Select aircraft → fetch track + nearest airports
+  // Select aircraft → fetch track + nearest airports + aircraft info
   const handleSelect = useCallback(async (ac: AircraftState | null) => {
     setSelected(ac);
     setDepartureAirport(null);
     setArrivalAirport(null);
     setArrivalCoords(null);
+    setAircraftInfo(null);
     if (!ac) {
       setTrackPath([]);
       return;
     }
     setTrackLoading(true);
+    setInfoLoading(true);
     try {
       const track = await fetchTrack(ac.icao24);
       setTrackPath(track.path);
       setDepartureAirport(track.estDepartureAirport ?? null);
       setArrivalAirport(track.estArrivalAirport ?? null);
-      // 도착 공항 좌표 조회
       if (track.estArrivalAirport) {
         fetchAirport(track.estArrivalAirport).then((airport) => {
           if (airport) setArrivalCoords({ lat: airport.lat, lng: airport.lng });
@@ -96,6 +127,11 @@ export default function TrackingPage() {
     } finally {
       setTrackLoading(false);
     }
+    // Fetch aircraft metadata
+    fetchAircraftInfo(ac.icao24).then((info) => {
+      setAircraftInfo(info);
+      setInfoLoading(false);
+    });
   }, []);
 
   // Derived data
@@ -105,11 +141,45 @@ export default function TrackingPage() {
 
   return (
     <main className="relative w-screen h-screen overflow-hidden bg-slate-50 dark:bg-[#0a0e1a]">
-      {/* App title + theme toggle */}
-      <div className="absolute top-3 left-3 md:top-6 md:left-6 z-[1000] flex items-center gap-2 md:gap-3">
-        <span className="text-slate-500 dark:text-white/60 text-sm font-medium tracking-wide">
+      {/* App title + search + theme toggle */}
+      <div className="absolute top-3 left-3 right-3 md:top-6 md:left-6 md:right-auto z-[1000] flex items-center gap-2 md:gap-3">
+        <span className="text-slate-500 dark:text-white/60 text-sm font-medium tracking-wide shrink-0">
           Flight Tracker
         </span>
+        <form
+          className="flex items-center gap-1.5"
+          onSubmit={(e) => {
+            e.preventDefault();
+            handleSearch(searchQuery);
+          }}
+        >
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Callsign (e.g. YP102)"
+            className="w-32 md:w-44 px-3 py-1.5 text-xs rounded-lg bg-white/70 dark:bg-black/50 backdrop-blur-md border border-black/10 dark:border-white/10 text-slate-800 dark:text-gray-200 placeholder-slate-400 dark:placeholder-gray-500 outline-none focus:border-cyan-400 dark:focus:border-cyan-400 transition-colors"
+          />
+          <button
+            type="submit"
+            className="px-2.5 py-1.5 text-xs rounded-lg bg-cyan-500/90 hover:bg-cyan-500 text-white font-medium transition-colors shrink-0"
+          >
+            Search
+          </button>
+          {searchMode && (
+            <button
+              type="button"
+              onClick={() => {
+                setSearchQuery("");
+                setSearchMode(false);
+                if (boundsRef.current) loadForBounds(boundsRef.current);
+              }}
+              className="px-2 py-1.5 text-xs rounded-lg bg-slate-200/80 dark:bg-gray-700/80 text-slate-600 dark:text-gray-300 hover:bg-slate-300 dark:hover:bg-gray-600 transition-colors shrink-0"
+            >
+              Clear
+            </button>
+          )}
+        </form>
         <ThemeToggle />
       </div>
 
@@ -132,7 +202,9 @@ export default function TrackingPage() {
               className="w-2 h-2 rounded-full"
               style={{ backgroundColor: "#22d3ee", boxShadow: "0 0 6px #22d3ee" }}
             />
-            <span className="text-slate-600 dark:text-gray-300">{count.toLocaleString()} aircraft</span>
+            <span className="text-slate-600 dark:text-gray-300">
+              {count.toLocaleString()} aircraft{searchMode && " found"}
+            </span>
           </div>
           {loading && <span className="text-cyan-600 dark:text-cyan-400 animate-pulse">loading...</span>}
           {lastUpdate && !loading && <span className="text-slate-400 dark:text-gray-500 hidden sm:inline">{lastUpdate}</span>}
@@ -168,9 +240,43 @@ export default function TrackingPage() {
               </div>
             </div>
 
-            {/* Aircraft Info */}
+            {/* Aircraft Metadata */}
+            {(infoLoading || aircraftInfo) && (
+              <div className="p-4 border-b border-black/10 dark:border-white/10">
+                <SectionTitle>Aircraft Details</SectionTitle>
+                {infoLoading ? (
+                  <div className="text-xs text-cyan-600 dark:text-cyan-400 animate-pulse mt-2">Loading aircraft details...</div>
+                ) : aircraftInfo && (
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-2 mt-2">
+                    {aircraftInfo.registration && (
+                      <InfoCell label="Registration" value={aircraftInfo.registration} />
+                    )}
+                    {aircraftInfo.model && (
+                      <InfoCell label="Model" value={aircraftInfo.model} />
+                    )}
+                    {aircraftInfo.manufacturerName && (
+                      <InfoCell label="Manufacturer" value={aircraftInfo.manufacturerName} />
+                    )}
+                    {aircraftInfo.operator && (
+                      <InfoCell label="Operator" value={aircraftInfo.operator} />
+                    )}
+                    {aircraftInfo.owner && aircraftInfo.owner !== aircraftInfo.operator && (
+                      <InfoCell label="Owner" value={aircraftInfo.owner} />
+                    )}
+                    {aircraftInfo.built && (
+                      <InfoCell label="Built" value={aircraftInfo.built} />
+                    )}
+                    {aircraftInfo.categoryDescription && (
+                      <InfoCell label="Category" value={aircraftInfo.categoryDescription} />
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Flight Info */}
             <div className="p-4 border-b border-black/10 dark:border-white/10">
-              <SectionTitle>Aircraft Info</SectionTitle>
+              <SectionTitle>Flight Info</SectionTitle>
               <div className="grid grid-cols-2 gap-x-4 gap-y-3 mt-2">
                 {selected.altitude != null && (
                   <InfoCell

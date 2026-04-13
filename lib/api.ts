@@ -1,4 +1,4 @@
-import { AircraftResponse, TrackResponse } from "./types";
+import { AircraftInfo, AircraftResponse, TrackResponse } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
@@ -19,6 +19,31 @@ export async function fetchAircraft(
   const res = await fetch(url, { signal: signal ?? AbortSignal.timeout(15000) });
   if (!res.ok) throw new Error(`Tracking API error: ${res.status}`);
   return res.json();
+}
+
+export async function fetchAircraftByCallsign(
+  callsign: string,
+  signal?: AbortSignal
+): Promise<AircraftResponse> {
+  const url = `${API_URL}/api/tracking/aircraft?callsign=${encodeURIComponent(callsign)}`;
+  const res = await fetch(url, { signal: signal ?? AbortSignal.timeout(15000) });
+  if (!res.ok) throw new Error(`Tracking API error: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchAircraftInfo(
+  icao24: string
+): Promise<AircraftInfo | null> {
+  try {
+    const res = await fetch(
+      `${API_URL}/api/tracking/aircraft/${encodeURIComponent(icao24)}/info`,
+      { signal: AbortSignal.timeout(10000) }
+    );
+    if (!res.ok) return null;
+    return res.json();
+  } catch {
+    return null;
+  }
 }
 
 export async function fetchNearestAirport(
