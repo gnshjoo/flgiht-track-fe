@@ -36,7 +36,7 @@ export default function TrackingPage() {
   const [arrivalCoords, setArrivalCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchMode, setSearchMode] = useState(false);
-  const [aircraftInfo, setAircraftInfo] = useState<AircraftInfo | null>(null);
+  const [aircraftInfo, setAircraftInfo] = useState<AircraftInfo | null | undefined>(undefined);
   const [infoLoading, setInfoLoading] = useState(false);
   const fetchRef = useRef<AbortController | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -105,7 +105,7 @@ export default function TrackingPage() {
     setDepartureAirport(null);
     setArrivalAirport(null);
     setArrivalCoords(null);
-    setAircraftInfo(null);
+    setAircraftInfo(undefined);
     if (!ac) {
       setTrackPath([]);
       return;
@@ -241,12 +241,12 @@ export default function TrackingPage() {
             </div>
 
             {/* Aircraft Metadata */}
-            {(infoLoading || aircraftInfo) && (
+            {(infoLoading || aircraftInfo !== undefined) && (
               <div className="p-4 border-b border-black/10 dark:border-white/10">
                 <SectionTitle>Aircraft Details</SectionTitle>
                 {infoLoading ? (
                   <div className="text-xs text-cyan-600 dark:text-cyan-400 animate-pulse mt-2">Loading aircraft details...</div>
-                ) : aircraftInfo && (
+                ) : aircraftInfo ? (
                   <div className="grid grid-cols-2 gap-x-4 gap-y-2 mt-2">
                     {aircraftInfo.registration && (
                       <InfoCell label="Registration" value={aircraftInfo.registration} />
@@ -270,6 +270,8 @@ export default function TrackingPage() {
                       <InfoCell label="Category" value={aircraftInfo.categoryDescription} />
                     )}
                   </div>
+                ) : (
+                  <div className="text-xs text-slate-400 dark:text-gray-500 mt-2">No aircraft details available</div>
                 )}
               </div>
             )}
