@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
+export const runtime = "edge";
+export const preferredRegion = "icn1";
+
 const BACKEND_URL = "https://shjoo.synology.me:7881";
 
 export async function GET(
