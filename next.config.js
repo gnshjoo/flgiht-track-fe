@@ -5,7 +5,7 @@ const nextConfig = {
       {
         source: "/api/:path*",
         destination:
-          "https://flight-track-production-5075.up.railway.app/api/:path*",
+          "https://shjoo.synology.me:7881/api/:path*",
       },
     ];
   },
