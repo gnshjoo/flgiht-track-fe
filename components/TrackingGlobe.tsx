@@ -352,9 +352,13 @@ export default function TrackingMap({
     const map = mapRef.current;
     if (map) {
       const isMobileFly = window.matchMedia("(max-width: 768px)").matches;
+      // Account for fixed overlays: desktop left panel (~360px) + top bar (~60px);
+      // mobile bottom sheet covers ~60vh.
       map.flyToBounds(bounds, {
-        padding: isMobileFly ? [40, 40] : [80, 80],
-        paddingBottomRight: isMobileFly ? [40, window.innerHeight * 0.6] : [80, 80],
+        paddingTopLeft: isMobileFly ? [40, 80] : [390, 90],
+        paddingBottomRight: isMobileFly
+          ? [40, Math.round(window.innerHeight * 0.6)]
+          : [80, 80],
         maxZoom: 8,
         duration: 1,
       });
