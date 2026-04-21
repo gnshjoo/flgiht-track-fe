@@ -85,15 +85,13 @@ export default function TrackingMap({
         });
       }
 
-      // Pulse animation
+      // Pulse animation (orange halo for selected aircraft — FR24 classic)
       if (!document.getElementById("plane-pulse-css")) {
         const s = document.createElement("style");
         s.id = "plane-pulse-css";
         s.textContent = `
-          @keyframes plane-pulse{0%,100%{box-shadow:0 0 0 0 rgba(251,191,36,.45)}50%{box-shadow:0 0 0 10px rgba(251,191,36,0)}}
+          @keyframes plane-pulse{0%,100%{box-shadow:0 0 0 0 rgba(255,122,0,.5)}50%{box-shadow:0 0 0 12px rgba(255,122,0,0)}}
           .leaflet-container{background:var(--bg-map)!important}
-          .plane-tooltip{background:#fbbf24!important;color:#000!important;border:none!important;border-radius:6px!important;padding:4px 10px!important;font-size:12px!important;font-weight:700!important;font-family:monospace!important;box-shadow:0 2px 10px rgba(251,191,36,.5)!important}
-          .plane-tooltip::before{border-top-color:#fbbf24!important}
         `;
         document.head.appendChild(s);
       }
@@ -175,25 +173,26 @@ export default function TrackingMap({
 
     visible.forEach((ac) => {
       const sel = ac.icao24 === selectedIcao;
-      const color = sel ? "#fbbf24" : "#22d3ee";
-      const sz = sel ? 38 : isMobile ? 32 : 28;
+      const color = sel ? "#FF7A00" : "#FBD200";
+      const sz = sel ? 28 : isMobile ? 26 : 20;
       const glow = sel
-        ? "drop-shadow(0 0 4px #fbbf24) drop-shadow(0 0 10px #fbbf24)"
-        : "drop-shadow(0 0 2px #22d3ee)";
+        ? "drop-shadow(0 0 4px rgba(255,122,0,.9)) drop-shadow(0 0 2px rgba(0,0,0,.7))"
+        : "drop-shadow(0 0 2px rgba(0,0,0,.8))";
 
-      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${sz}" height="${sz}" viewBox="0 0 24 24" fill="${color}" style="transform:rotate(${ac.heading ?? 0}deg);filter:${glow}"><path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/></svg>`;
+      // FR24-style top-down plane silhouette (nose up → heading 0° = north)
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${sz}" height="${sz}" viewBox="0 0 32 32" fill="${color}" style="transform:rotate(${ac.heading ?? 0}deg);filter:${glow}"><path d="M16 2 C 15.4 2 14.8 2.7 14.6 4 L 14 10 L 2 15.5 L 2 17.5 L 14 15 L 13.7 22 L 9.5 24 L 9.5 25.5 L 16 24 L 22.5 25.5 L 22.5 24 L 18.3 22 L 18 15 L 30 17.5 L 30 15.5 L 18 10 L 17.4 4 C 17.2 2.7 16.6 2 16 2 Z"/></svg>`;
 
-      // Wrap in a larger touch target on mobile
+      // Wrap in a larger touch target on mobile; pulse halo on selected
       let html: string;
       if (sel) {
-        html = `<div style="border:2px solid #fbbf24;border-radius:50%;padding:4px;background:rgba(251,191,36,.15);display:inline-flex;align-items:center;justify-content:center;animation:plane-pulse 1.5s ease-in-out infinite">${svg}</div>`;
+        html = `<div style="width:${sz + 12}px;height:${sz + 12}px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;animation:plane-pulse 1.8s ease-in-out infinite">${svg}</div>`;
       } else if (isMobile) {
-        html = `<div style="padding:8px;display:inline-flex;align-items:center;justify-content:center">${svg}</div>`;
+        html = `<div style="padding:6px;display:inline-flex;align-items:center;justify-content:center">${svg}</div>`;
       } else {
         html = svg;
       }
 
-      const total = sel ? 52 : isMobile ? 48 : sz;
+      const total = sel ? sz + 12 : isMobile ? sz + 12 : sz;
       const icon = L.divIcon({
         className: "",
         iconSize: [total, total],
@@ -262,33 +261,33 @@ export default function TrackingMap({
       (wp, i) => L.latLng(wp.latitude, unwrappedLngs[i])
     );
 
-    // Traveled path - Glow
+    // Traveled path - Glow (FR24 yellow halo)
     L.polyline(latlngs, {
-      color: "#fbbf24",
-      weight: 7,
-      opacity: 0.2,
+      color: "#FBD200",
+      weight: 6,
+      opacity: 0.18,
       lineCap: "round",
       lineJoin: "round",
     }).addTo(layer);
 
-    // Traveled path - Main dashed line
+    // Traveled path - Main solid line
     L.polyline(latlngs, {
-      color: "#fbbf24",
-      weight: 3,
-      opacity: 0.85,
-      dashArray: "10 5",
+      color: "#FBD200",
+      weight: 2.5,
+      opacity: 0.9,
       lineCap: "round",
       lineJoin: "round",
     }).addTo(layer);
 
-    // Departure marker
+    // Departure airport marker — FR24 classic: yellow dot + label chip
     const dep = airborne[0];
+    const depLabel = departureAirport || "DEP";
     L.marker([dep.latitude, dep.longitude], {
       icon: L.divIcon({
         className: "",
-        iconSize: [120, 30],
-        iconAnchor: [60, 40],
-        html: `<div style="background:#f59e0b;color:#000;font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;white-space:nowrap;box-shadow:0 2px 8px rgba(245,158,11,.5);text-align:center">▲ Departure${departureAirport ? ` (${departureAirport})` : ""}</div>`,
+        iconSize: [12, 12],
+        iconAnchor: [6, 6],
+        html: `<div style="position:relative"><div style="width:10px;height:10px;border:2px solid #fff;background:#FBD200;border-radius:2px;box-shadow:0 0 0 2px rgba(0,0,0,.6)"></div><div style="position:absolute;top:14px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.75);color:#FBD200;font-size:10px;font-weight:600;padding:2px 6px;border-radius:3px;white-space:nowrap;letter-spacing:0.04em">${depLabel}</div></div>`,
       }),
       interactive: false,
       zIndexOffset: 900,
@@ -308,44 +307,36 @@ export default function TrackingMap({
         L.latLng(arrivalCoords.lat, arrLng),
       ];
 
-      // Projected route - Glow (faint)
+      // Projected route - dashed FR24 orange, faint
       L.polyline(projectedLatLngs, {
-        color: "#06b6d4",
-        weight: 5,
-        opacity: 0.1,
-        lineCap: "round",
-        lineJoin: "round",
-      }).addTo(layer);
-
-      // Projected route - Dashed line (faint)
-      L.polyline(projectedLatLngs, {
-        color: "#06b6d4",
+        color: "#FF7A00",
         weight: 2,
-        opacity: 0.4,
-        dashArray: "6 8",
+        opacity: 0.5,
+        dashArray: "6 6",
         lineCap: "round",
         lineJoin: "round",
       }).addTo(layer);
 
-      // Arrival airport marker
+      // Arrival airport marker — FR24 orange
+      const arrLabel = arrivalAirport || "ARR";
       L.marker([arrivalCoords.lat, arrLng], {
         icon: L.divIcon({
           className: "",
-          iconSize: [120, 30],
-          iconAnchor: [60, 40],
-          html: `<div style="background:#06b6d4;color:#000;font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;white-space:nowrap;box-shadow:0 2px 8px rgba(6,182,212,.5);text-align:center">● Arrival${arrivalAirport ? ` (${arrivalAirport})` : ""}</div>`,
+          iconSize: [12, 12],
+          iconAnchor: [6, 6],
+          html: `<div style="position:relative"><div style="width:10px;height:10px;border:2px solid #fff;background:#FF7A00;border-radius:2px;box-shadow:0 0 0 2px rgba(0,0,0,.6)"></div><div style="position:absolute;top:14px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.75);color:#FF7A00;font-size:10px;font-weight:600;padding:2px 6px;border-radius:3px;white-space:nowrap;letter-spacing:0.04em">${arrLabel}</div></div>`,
         }),
         interactive: false,
         zIndexOffset: 900,
       }).addTo(layer);
     } else {
-      // 도착 좌표 없을 때 현재 위치 마커
+      // No arrival coords — show current position marker in orange
       L.marker([cur.latitude, cur.longitude], {
         icon: L.divIcon({
           className: "",
-          iconSize: [120, 30],
-          iconAnchor: [60, 40],
-          html: `<div style="background:#06b6d4;color:#000;font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;white-space:nowrap;box-shadow:0 2px 8px rgba(6,182,212,.5);text-align:center">● Current${arrivalAirport ? ` (→${arrivalAirport})` : ""}</div>`,
+          iconSize: [12, 12],
+          iconAnchor: [6, 6],
+          html: `<div style="position:relative"><div style="width:10px;height:10px;border:2px solid #fff;background:#FF7A00;border-radius:50%;box-shadow:0 0 0 2px rgba(0,0,0,.6)"></div><div style="position:absolute;top:14px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.75);color:#FF7A00;font-size:10px;font-weight:600;padding:2px 6px;border-radius:3px;white-space:nowrap;letter-spacing:0.04em">${arrivalAirport ? `→ ${arrivalAirport}` : "Current"}</div></div>`,
         }),
         interactive: false,
         zIndexOffset: 900,

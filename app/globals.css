@@ -3,38 +3,145 @@
 @tailwind utilities;
 
 :root {
-  --bg-primary: #f8fafc;
+  --bg-primary: #f5f5f2;
   --bg-map: #e2e8f0;
+  --bg-panel: rgba(255, 255, 255, 0.96);
+  --bg-panel-solid: #ffffff;
+  --border: rgba(15, 23, 42, 0.08);
+  --border-2: rgba(15, 23, 42, 0.04);
+  --text-primary: #0f172a;
+  --text-secondary: #52525b;
+  --text-tertiary: #94959b;
+  --accent: #ff7a00;
+  --accent-2: #fbd200;
 }
 
 .dark {
-  --bg-primary: #0a0a1a;
-  --bg-map: #0a0e1a;
+  --bg-primary: #14161a;
+  --bg-map: #0a0c10;
+  --bg-panel: rgba(22, 25, 31, 0.96);
+  --bg-panel-solid: #161920;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-2: rgba(255, 255, 255, 0.04);
+  --text-primary: #eceff2;
+  --text-secondary: #9aa1ad;
+  --text-tertiary: #5e6470;
+  --accent: #ff7a00;
+  --accent-2: #fbd200;
+}
+
+html,
+body {
+  height: 100%;
 }
 
 body {
   background: var(--bg-primary);
-  color: #ffffff;
+  color: var(--text-primary);
   overflow: hidden;
+  font-feature-settings: "cv11", "ss03";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 @layer components {
-  .glass {
-    @apply bg-black/[0.06] dark:bg-white/[0.12] backdrop-blur-xl border border-black/[0.08] dark:border-white/[0.12] rounded-2xl;
+  .fr-panel {
+    @apply bg-white/[0.96] dark:bg-[#161920]/[0.96] backdrop-blur-xl border border-black/[0.08] dark:border-white/[0.08] rounded-2xl shadow-2xl;
+  }
+  .fr-input {
+    @apply bg-transparent outline-none border-0 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500;
   }
 }
 
+/* ---------- scrollbar ---------- */
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+}
+.scrollbar-thin::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 2px;
+}
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ---------- leaflet overrides ---------- */
+.leaflet-container {
+  background: var(--bg-map) !important;
+  font-family: inherit !important;
+}
+.leaflet-control-attribution {
+  background: rgba(0, 0, 0, 0.5) !important;
+  color: rgba(255, 255, 255, 0.4) !important;
+  font-size: 10px !important;
+}
+.leaflet-control-attribution a {
+  color: rgba(255, 255, 255, 0.6) !important;
+}
+html:not(.dark) .leaflet-control-attribution {
+  background: rgba(255, 255, 255, 0.7) !important;
+  color: rgba(15, 23, 42, 0.55) !important;
+}
+html:not(.dark) .leaflet-control-attribution a {
+  color: rgba(15, 23, 42, 0.75) !important;
+}
+
+/* plane tooltip */
+.plane-tooltip {
+  background: rgba(0, 0, 0, 0.75) !important;
+  color: #fbd200 !important;
+  border: none !important;
+  border-radius: 4px !important;
+  padding: 2px 7px !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  font-family: inherit !important;
+  letter-spacing: 0.02em !important;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4) !important;
+}
+.plane-tooltip::before {
+  display: none !important;
+}
+
+/* ---------- animations ---------- */
 @keyframes slide-in {
   from {
     opacity: 0;
-    transform: translateX(20px);
+    transform: translateX(-16px);
   }
   to {
     opacity: 1;
     transform: translateX(0);
   }
 }
-
 .animate-slide-in {
-  animation: slide-in 0.3s ease-out;
+  animation: slide-in 0.22s ease-out;
+}
+
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-slide-up {
+  animation: slide-up 0.22s ease-out;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0.3;
+  }
+}
+.animate-blink {
+  animation: blink 1.4s infinite;
 }

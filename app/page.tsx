@@ -1,16 +1,22 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback } from "react";
 import dynamic from "next/dynamic";
 import { AircraftInfo, AircraftState, TrackWaypoint } from "@/lib/types";
-import { fetchAircraft, fetchAircraftByCallsign, fetchAircraftInfo, fetchTrack, fetchAirport } from "@/lib/api";
+import {
+  fetchAircraft,
+  fetchAircraftByCallsign,
+  fetchAircraftInfo,
+  fetchTrack,
+  fetchAirport,
+} from "@/lib/api";
 import ThemeToggle from "@/components/ThemeToggle";
 
 const TrackingMap = dynamic(() => import("@/components/TrackingGlobe"), {
   ssr: false,
   loading: () => (
-    <div className="w-full h-full flex items-center justify-center bg-slate-200 dark:bg-[#0a0e1a]">
-      <div className="text-cyan-600 dark:text-cyan-400 text-sm animate-pulse">Loading map...</div>
+    <div className="w-full h-full flex items-center justify-center bg-slate-200 dark:bg-[#0a0c10]">
+      <div className="text-fr24-yellow text-sm animate-pulse">Loading map…</div>
     </div>
   ),
 });
@@ -21,6 +27,10 @@ type Bounds = {
   lamax: number;
   lomax: number;
 };
+
+// FR24-style top-down plane silhouette (nose up)
+const PLANE_PATH =
+  "M16 2 C 15.4 2 14.8 2.7 14.6 4 L 14 10 L 2 15.5 L 2 17.5 L 14 15 L 13.7 22 L 9.5 24 L 9.5 25.5 L 16 24 L 22.5 25.5 L 22.5 24 L 18.3 22 L 18 15 L 30 17.5 L 30 15.5 L 18 10 L 17.4 4 C 17.2 2.7 16.6 2 16 2 Z";
 
 export default function TrackingPage() {
   const [aircraft, setAircraft] = useState<AircraftState[]>([]);
@@ -38,6 +48,7 @@ export default function TrackingPage() {
   const [searchMode, setSearchMode] = useState(false);
   const [aircraftInfo, setAircraftInfo] = useState<AircraftInfo | null | undefined>(undefined);
   const [infoLoading, setInfoLoading] = useState(false);
+
   const fetchRef = useRef<AbortController | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const boundsRef = useRef<Bounds | null>(null);
@@ -61,31 +72,33 @@ export default function TrackingPage() {
     }
   }, []);
 
-  // Search by callsign
-  const handleSearch = useCallback(async (query: string) => {
-    if (!query.trim()) {
-      setSearchMode(false);
-      if (boundsRef.current) loadForBounds(boundsRef.current);
-      return;
-    }
-    fetchRef.current?.abort();
-    const ctrl = new AbortController();
-    fetchRef.current = ctrl;
-    try {
-      setLoading(true);
-      setSearchMode(true);
-      if (timerRef.current) clearInterval(timerRef.current);
-      const data = await fetchAircraftByCallsign(query.trim(), ctrl.signal);
-      setAircraft(data.aircraft);
-      setCount(data.aircraft.length);
-      setLastUpdate(new Date().toLocaleTimeString());
-      setError(null);
-    } catch (e: any) {
-      if (e?.name !== "AbortError") setError("Search failed.");
-    } finally {
-      setLoading(false);
-    }
-  }, [loadForBounds]);
+  const handleSearch = useCallback(
+    async (query: string) => {
+      if (!query.trim()) {
+        setSearchMode(false);
+        if (boundsRef.current) loadForBounds(boundsRef.current);
+        return;
+      }
+      fetchRef.current?.abort();
+      const ctrl = new AbortController();
+      fetchRef.current = ctrl;
+      try {
+        setLoading(true);
+        setSearchMode(true);
+        if (timerRef.current) clearInterval(timerRef.current);
+        const data = await fetchAircraftByCallsign(query.trim(), ctrl.signal);
+        setAircraft(data.aircraft);
+        setCount(data.aircraft.length);
+        setLastUpdate(new Date().toLocaleTimeString());
+        setError(null);
+      } catch (e: any) {
+        if (e?.name !== "AbortError") setError("Search failed.");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [loadForBounds]
+  );
 
   const handleBoundsChange = useCallback(
     (bounds: Bounds) => {
@@ -99,7 +112,6 @@ export default function TrackingPage() {
     [loadForBounds]
   );
 
-  // Select aircraft → fetch track + nearest airports + aircraft info
   const handleSelect = useCallback(async (ac: AircraftState | null) => {
     setSelected(ac);
     setDepartureAirport(null);
@@ -127,62 +139,17 @@ export default function TrackingPage() {
     } finally {
       setTrackLoading(false);
     }
-    // Fetch aircraft metadata
     fetchAircraftInfo(ac.icao24).then((info) => {
       setAircraftInfo(info);
       setInfoLoading(false);
     });
   }, []);
 
-  // Derived data
   const airborne = trackPath.filter((wp) => !wp.onGround);
-  const departureWp = airborne.length > 0 ? airborne[0] : null;
-  const currentWp = airborne.length > 0 ? airborne[airborne.length - 1] : null;
+  const hasRoute = airborne.length > 0 && (departureAirport || arrivalAirport);
 
   return (
-    <main className="relative w-screen h-screen overflow-hidden bg-slate-50 dark:bg-[#0a0e1a]">
-      {/* App title + search + theme toggle */}
-      <div className="absolute top-3 left-3 right-3 md:top-6 md:left-6 md:right-auto z-[1000] flex items-center gap-2 md:gap-3">
-        <span className="text-slate-500 dark:text-white/60 text-sm font-medium tracking-wide shrink-0">
-          Flight Tracker
-        </span>
-        <form
-          className="flex items-center gap-1.5"
-          onSubmit={(e) => {
-            e.preventDefault();
-            handleSearch(searchQuery);
-          }}
-        >
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Callsign (e.g. YP102)"
-            className="w-32 md:w-44 px-3 py-1.5 text-xs rounded-lg bg-white/70 dark:bg-black/50 backdrop-blur-md border border-black/10 dark:border-white/10 text-slate-800 dark:text-gray-200 placeholder-slate-400 dark:placeholder-gray-500 outline-none focus:border-cyan-400 dark:focus:border-cyan-400 transition-colors"
-          />
-          <button
-            type="submit"
-            className="px-2.5 py-1.5 text-xs rounded-lg bg-cyan-500/90 hover:bg-cyan-500 text-white font-medium transition-colors shrink-0"
-          >
-            Search
-          </button>
-          {searchMode && (
-            <button
-              type="button"
-              onClick={() => {
-                setSearchQuery("");
-                setSearchMode(false);
-                if (boundsRef.current) loadForBounds(boundsRef.current);
-              }}
-              className="px-2 py-1.5 text-xs rounded-lg bg-slate-200/80 dark:bg-gray-700/80 text-slate-600 dark:text-gray-300 hover:bg-slate-300 dark:hover:bg-gray-600 transition-colors shrink-0"
-            >
-              Clear
-            </button>
-          )}
-        </form>
-        <ThemeToggle />
-      </div>
-
+    <main className="relative w-screen h-screen overflow-hidden bg-slate-100 dark:bg-[#14161a]">
       <TrackingMap
         aircraft={aircraft}
         trackPath={trackPath}
@@ -194,302 +161,346 @@ export default function TrackingPage() {
         arrivalCoords={arrivalCoords}
       />
 
-      {/* --- Bottom stats bar --- */}
-      <div className={`absolute left-1/2 -translate-x-1/2 z-[1000] transition-all ${selected ? "bottom-[62vh] md:bottom-4" : "bottom-4"}`}>
-        <div className="flex items-center gap-3 md:gap-4 bg-white/70 dark:bg-black/60 backdrop-blur-md px-3 md:px-4 py-2 rounded-lg text-xs border border-black/10 dark:border-white/5">
-          <div className="flex items-center gap-1.5">
-            <div
-              className="w-2 h-2 rounded-full"
-              style={{ backgroundColor: "#22d3ee", boxShadow: "0 0 6px #22d3ee" }}
-            />
-            <span className="text-slate-600 dark:text-gray-300">
-              {count.toLocaleString()} aircraft{searchMode && " found"}
-            </span>
+      {/* ============ TOP FLOATING BAR ============ */}
+      <div className="absolute top-3 md:top-4 left-1/2 -translate-x-1/2 z-[1000] w-[calc(100%-20px)] md:w-auto md:min-w-[540px] flex items-center gap-2 px-3 py-1.5 bg-white/95 dark:bg-[#161920]/95 backdrop-blur-xl border border-black/10 dark:border-white/10 rounded-xl shadow-2xl">
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="w-5 h-5 text-fr24-yellow">
+            <svg viewBox="0 0 32 32" fill="currentColor">
+              <path d={PLANE_PATH} />
+            </svg>
           </div>
-          {loading && <span className="text-cyan-600 dark:text-cyan-400 animate-pulse">loading...</span>}
-          {lastUpdate && !loading && <span className="text-slate-400 dark:text-gray-500 hidden sm:inline">{lastUpdate}</span>}
-          {error && <span className="text-red-500 dark:text-red-400">{error}</span>}
+          <span className="text-[13.5px] font-semibold text-slate-900 dark:text-slate-100 tracking-tight hidden md:inline">
+            Flight Tracker
+          </span>
         </div>
+        <div className="w-px h-[18px] bg-black/10 dark:bg-white/10 hidden md:block" />
+        <form
+          className="flex-1 flex items-center gap-2 min-w-0"
+          onSubmit={(e) => {
+            e.preventDefault();
+            handleSearch(searchQuery);
+          }}
+        >
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search by callsign, airport, registration…"
+            className="fr-input flex-1 text-[13px] py-1 min-w-0"
+          />
+          {searchMode && (
+            <button
+              type="button"
+              onClick={() => {
+                setSearchQuery("");
+                setSearchMode(false);
+                if (boundsRef.current) loadForBounds(boundsRef.current);
+              }}
+              className="text-[11px] text-slate-400 dark:text-slate-500 hover:text-slate-900 dark:hover:text-white px-1.5 py-0.5 rounded transition-colors shrink-0"
+            >
+              Clear
+            </button>
+          )}
+        </form>
+        <kbd className="hidden md:inline-flex items-center px-1.5 py-0.5 text-[10px] font-mono border border-black/10 dark:border-white/10 rounded text-slate-500 dark:text-slate-400 shrink-0">
+          ⌘K
+        </kbd>
+        <ThemeToggle />
       </div>
 
-      {/* --- Aircraft detail panel --- */}
+      {/* ============ FILTER CHIPS (desktop) ============ */}
+      <div className="hidden md:flex absolute top-[68px] left-3.5 gap-1.5 z-[900]">
+        <div className="px-2.5 py-1.5 rounded-lg text-[12px] flex items-center gap-1.5 bg-white/95 dark:bg-[#161920]/95 backdrop-blur-xl border border-fr24-yellow/40 text-slate-900 dark:text-slate-100">
+          All<span className="text-fr24-yellow font-semibold">{count.toLocaleString()}</span>
+        </div>
+        <FilterChip>Airborne</FilterChip>
+        <FilterChip>Ground</FilterChip>
+        <FilterChip>Altitude</FilterChip>
+        <FilterChip>Airline</FilterChip>
+      </div>
+
+      {/* ============ LEFT DETAIL PANEL (desktop) / BOTTOM SHEET (mobile) ============ */}
       {selected && (
-        <div className="absolute z-[1000] bottom-0 left-0 right-0 max-h-[60vh] overflow-y-auto scrollbar-thin md:bottom-auto md:left-auto md:top-16 md:right-3 md:w-[340px] md:max-h-[calc(100vh-5rem)] md:rounded-xl rounded-t-xl">
-          <div className="bg-white/95 dark:bg-gray-900/95 backdrop-blur-md md:rounded-xl rounded-t-xl border border-black/10 dark:border-white/10 shadow-2xl">
-            {/* Drag handle (mobile) */}
+        <div className="absolute z-[1000] bottom-0 left-0 right-0 max-h-[60vh] overflow-y-auto scrollbar-thin md:bottom-auto md:right-auto md:top-[68px] md:left-3.5 md:w-[360px] md:max-h-[calc(100vh-88px)] rounded-t-2xl md:rounded-2xl animate-slide-up md:animate-slide-in">
+          <div className="bg-white/95 dark:bg-[#161920]/95 backdrop-blur-xl border border-black/10 dark:border-white/10 md:rounded-2xl rounded-t-2xl shadow-2xl overflow-hidden">
+            {/* Mobile drag handle */}
             <div className="flex justify-center pt-2 pb-0 md:hidden">
-              <div className="w-10 h-1 rounded-full bg-slate-300 dark:bg-gray-600" />
+              <div className="w-10 h-1 rounded-full bg-slate-300 dark:bg-slate-600" />
             </div>
-            {/* Header */}
-            <div className="p-4 pb-3 border-b border-black/10 dark:border-white/10">
-              <div className="flex items-start justify-between">
-                <div>
-                  <h3 className="text-amber-500 dark:text-amber-400 font-bold text-xl font-mono leading-tight">
-                    {selected.callsign || selected.icao24}
-                  </h3>
-                  <p className="text-slate-500 dark:text-gray-400 text-sm mt-0.5">
-                    ICAO {selected.icao24} · {selected.originCountry}
-                  </p>
+
+            {/* ----- HERO ----- */}
+            <div className="relative h-[152px] bg-gradient-to-br from-slate-700 via-slate-800 to-[#0a0c10] overflow-hidden">
+              <div className="absolute top-3 left-3 z-[2] px-2.5 py-1 text-[11px] font-medium bg-black/65 border border-white/10 rounded-md text-slate-100 backdrop-blur-sm tracking-wide">
+                {selected.originCountry}
+              </div>
+              <button
+                onClick={() => handleSelect(null)}
+                aria-label="Close"
+                className="absolute top-2.5 right-2.5 z-[2] w-8 h-8 bg-black/65 border border-white/10 rounded-lg text-white hover:bg-black/85 grid place-items-center text-lg leading-none transition-colors"
+              >
+                ×
+              </button>
+              <div className="absolute inset-0 grid place-items-center opacity-[0.22] text-fr24-yellow">
+                <svg viewBox="0 0 32 32" fill="currentColor" className="w-[110px] h-[110px]">
+                  <path d={PLANE_PATH} />
+                </svg>
+              </div>
+              {(aircraftInfo?.model || aircraftInfo?.registration) && (
+                <div className="absolute bottom-2.5 left-3 z-[2] text-[11px] text-slate-200/90 tracking-wide">
+                  {aircraftInfo?.model}
+                  {aircraftInfo?.registration ? ` · ${aircraftInfo.registration}` : ""}
                 </div>
-                <button
-                  onClick={() => handleSelect(null)}
-                  className="text-slate-400 dark:text-gray-500 hover:text-slate-900 dark:hover:text-white transition-colors text-2xl leading-none ml-2 -mt-1 p-1 min-w-[44px] min-h-[44px] flex items-center justify-center"
-                >
-                  ×
-                </button>
-              </div>
+              )}
             </div>
 
-            {/* Aircraft Metadata */}
-            {(infoLoading || aircraftInfo !== undefined) && (
-              <div className="p-4 border-b border-black/10 dark:border-white/10">
-                <SectionTitle>Aircraft Details</SectionTitle>
-                {infoLoading ? (
-                  <div className="text-xs text-cyan-600 dark:text-cyan-400 animate-pulse mt-2">Loading aircraft details...</div>
-                ) : aircraftInfo ? (
-                  <div className="grid grid-cols-2 gap-x-4 gap-y-2 mt-2">
-                    {aircraftInfo.registration && (
-                      <InfoCell label="Registration" value={aircraftInfo.registration} />
-                    )}
-                    {aircraftInfo.model && (
-                      <InfoCell label="Model" value={aircraftInfo.model} />
-                    )}
-                    {aircraftInfo.manufacturerName && (
-                      <InfoCell label="Manufacturer" value={aircraftInfo.manufacturerName} />
-                    )}
-                    {aircraftInfo.operator && (
-                      <InfoCell label="Operator" value={aircraftInfo.operator} />
-                    )}
-                    {aircraftInfo.owner && aircraftInfo.owner !== aircraftInfo.operator && (
-                      <InfoCell label="Owner" value={aircraftInfo.owner} />
-                    )}
-                    {aircraftInfo.built && (
-                      <InfoCell label="Built" value={aircraftInfo.built} />
-                    )}
-                    {aircraftInfo.categoryDescription && (
-                      <InfoCell label="Category" value={aircraftInfo.categoryDescription} />
-                    )}
-                  </div>
-                ) : (
-                  <div className="text-xs text-slate-400 dark:text-gray-500 mt-2">No aircraft details available</div>
-                )}
+            {/* ----- BODY ----- */}
+            <div className="p-4 space-y-4">
+              {/* Title */}
+              <div>
+                <div className="flex items-baseline gap-2.5">
+                  <h3 className="text-[22px] font-bold tracking-tight leading-none text-slate-900 dark:text-slate-100">
+                    {selected.callsign?.trim() || selected.icao24}
+                  </h3>
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400 font-mono px-1.5 py-0.5 rounded border border-black/10 dark:border-white/10">
+                    {selected.icao24.toUpperCase()}
+                  </span>
+                </div>
+                <p className="text-[12px] text-slate-500 dark:text-slate-400 mt-1">
+                  {aircraftInfo?.model || "Aircraft"}
+                  {aircraftInfo?.operator
+                    ? ` · ${aircraftInfo.operator}`
+                    : ` · ${selected.originCountry}`}
+                </p>
               </div>
-            )}
 
-            {/* Flight Info */}
-            <div className="p-4 border-b border-black/10 dark:border-white/10">
-              <SectionTitle>Flight Info</SectionTitle>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-3 mt-2">
-                {selected.altitude != null && (
-                  <InfoCell
-                    label="Altitude"
-                    value={`${Math.round(selected.altitude).toLocaleString()}m`}
-                    sub={`${Math.round(selected.altitude * 3.281).toLocaleString()} ft`}
-                  />
-                )}
-                {selected.velocity != null && (
-                  <InfoCell
-                    label="Speed"
-                    value={`${Math.round(selected.velocity * 3.6)} km/h`}
-                    sub={`${Math.round(selected.velocity * 1.944)} kts`}
-                  />
-                )}
-                {selected.heading != null && (
-                  <InfoCell label="Heading" value={`${Math.round(selected.heading)}°`} />
-                )}
-                {selected.verticalRate != null && (
-                  <InfoCell
-                    label="Vertical Rate"
-                    value={`${selected.verticalRate > 0 ? "+" : ""}${Math.round(selected.verticalRate)} m/s`}
-                  />
-                )}
-                <InfoCell
-                  label="Position"
-                  value={`${selected.latitude.toFixed(4)}, ${selected.longitude.toFixed(4)}`}
-                />
-              </div>
-            </div>
-
-            {/* Track info */}
-            {trackLoading && (
-              <div className="p-4 text-center text-sm text-cyan-600 dark:text-cyan-400 animate-pulse">
-                Loading flight path...
-              </div>
-            )}
-
-            {airborne.length > 0 && !trackLoading && (
-              <div className="p-4 space-y-4">
-                {/* Route summary: DEP → ARR */}
-                <div className="flex items-center justify-center gap-3">
-                  <div className="text-center">
-                    <div className="text-amber-500 dark:text-amber-400 font-bold text-lg font-mono">
+              {/* Route + progress */}
+              {hasRoute ? (
+                <div className="grid grid-cols-[auto_1fr_auto] items-end gap-3">
+                  <div>
+                    <div className="text-[22px] font-bold tracking-tight text-fr24-yellow leading-none">
                       {departureAirport || "---"}
                     </div>
-                    <div className="text-slate-400 dark:text-gray-500 text-xs">Departure</div>
+                    <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-1 tracking-wide">
+                      Departure
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1 text-slate-400 dark:text-gray-500">
-                    <div className="w-8 h-px bg-slate-300 dark:bg-gray-600" />
-                    <span className="text-base">✈</span>
-                    <div className="w-8 h-px bg-slate-300 dark:bg-gray-600" />
+                  <div className="relative h-[4px] rounded-full bg-black/10 dark:bg-white/10 mb-3 overflow-visible">
+                    <div className="absolute inset-y-0 left-0 w-[47%] bg-gradient-to-r from-fr24-yellow to-fr24-orange rounded-full" />
+                    <div className="absolute left-[47%] top-1/2 -translate-x-1/2 -translate-y-1/2 w-[18px] h-[18px] bg-fr24-orange border-2 border-white dark:border-[#161920] rounded-full grid place-items-center text-white shadow-[0_0_10px_rgba(255,122,0,0.6)]">
+                      <svg viewBox="0 0 32 32" fill="currentColor" className="w-[10px] h-[10px] rotate-90">
+                        <path d={PLANE_PATH} />
+                      </svg>
+                    </div>
                   </div>
-                  <div className="text-center">
-                    <div className="text-cyan-500 dark:text-cyan-400 font-bold text-lg font-mono">
+                  <div>
+                    <div className="text-[22px] font-bold tracking-tight text-fr24-orange leading-none text-right">
                       {arrivalAirport || "---"}
                     </div>
-                    <div className="text-slate-400 dark:text-gray-500 text-xs">Arrival</div>
-                  </div>
-                </div>
-
-                {/* Departure detail */}
-                <div className="border border-black/5 dark:border-white/5 rounded-lg p-3 bg-black/[0.02] dark:bg-white/[0.02]">
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="w-2.5 h-2.5 rounded-full bg-amber-500 dark:bg-amber-400 shrink-0" />
-                    <span className="text-amber-500 dark:text-amber-400 font-semibold text-sm">
-                      Departed {departureAirport ? `(${departureAirport})` : ""}
-                    </span>
-                  </div>
-                  {departureWp && (
-                    <div className="grid grid-cols-2 gap-2 text-xs ml-4">
-                      <InfoMini
-                        label="Position"
-                        value={`${departureWp.latitude.toFixed(4)}, ${departureWp.longitude.toFixed(4)}`}
-                      />
-                      {departureWp.altitude != null && (
-                        <InfoMini
-                          label="Altitude"
-                          value={`${Math.round(departureWp.altitude).toLocaleString()}m`}
-                        />
-                      )}
-                      <InfoMini
-                        label="Time"
-                        value={new Date(departureWp.time * 1000).toLocaleTimeString()}
-                      />
+                    <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-1 text-right tracking-wide">
+                      Arrival
                     </div>
-                  )}
-                </div>
-
-                {/* Current position detail */}
-                <div className="border border-black/5 dark:border-white/5 rounded-lg p-3 bg-black/[0.02] dark:bg-white/[0.02]">
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="w-2.5 h-2.5 rounded-full bg-cyan-500 dark:bg-cyan-400 shrink-0" />
-                    <span className="text-cyan-500 dark:text-cyan-400 font-semibold text-sm">
-                      Current Position
-                    </span>
                   </div>
-                  {currentWp && (
-                    <div className="grid grid-cols-2 gap-2 text-xs ml-4">
-                      <InfoMini
-                        label="Position"
-                        value={`${currentWp.latitude.toFixed(4)}, ${currentWp.longitude.toFixed(4)}`}
-                      />
-                      {currentWp.altitude != null && (
-                        <InfoMini
-                          label="Altitude"
-                          value={`${Math.round(currentWp.altitude).toLocaleString()}m`}
-                        />
-                      )}
-                      {currentWp.heading != null && (
-                        <InfoMini label="Heading" value={`${Math.round(currentWp.heading)}°`} />
-                      )}
-                      <InfoMini
-                        label="Time"
-                        value={new Date(currentWp.time * 1000).toLocaleTimeString()}
-                      />
-                    </div>
-                  )}
                 </div>
+              ) : trackLoading ? (
+                <div className="text-[12px] text-fr24-yellow animate-pulse text-center py-2">
+                  Loading flight path…
+                </div>
+              ) : null}
 
-                {/* Waypoints list */}
-                <div>
-                  <SectionTitle>
-                    Waypoints ({airborne.length})
-                  </SectionTitle>
-                  <div className="mt-2 max-h-48 overflow-y-auto space-y-1 scrollbar-thin">
-                    {airborne.map((wp, i) => (
-                      <div
-                        key={i}
-                        className="flex items-center text-xs gap-2 px-2 py-1.5 rounded hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
-                      >
-                        <span className="text-slate-400 dark:text-gray-600 w-5 text-right shrink-0 font-mono">
-                          {i + 1}
-                        </span>
-                        <div
-                          className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                            i === 0
-                              ? "bg-amber-500 dark:bg-amber-400"
-                              : i === airborne.length - 1
-                                ? "bg-cyan-500 dark:bg-cyan-400"
-                                : "bg-slate-300 dark:bg-gray-600"
-                          }`}
-                        />
-                        <span className="text-slate-600 dark:text-gray-300 font-mono">
-                          {wp.latitude.toFixed(3)}, {wp.longitude.toFixed(3)}
-                        </span>
-                        {wp.altitude != null && (
-                          <span className="text-slate-400 dark:text-gray-500 ml-auto">
-                            {Math.round(wp.altitude).toLocaleString()}m
-                          </span>
+              {/* Stats grid 2×2 */}
+              <div className="grid grid-cols-2 gap-px bg-black/[0.06] dark:bg-white/[0.06] border border-black/[0.06] dark:border-white/[0.06] rounded-xl overflow-hidden">
+                <StatCell
+                  label="Altitude"
+                  value={
+                    selected.altitude != null
+                      ? Math.round(selected.altitude * 3.281).toLocaleString()
+                      : "—"
+                  }
+                  unit={selected.altitude != null ? "ft" : undefined}
+                  sub={
+                    selected.altitude != null
+                      ? `${Math.round(selected.altitude).toLocaleString()} m`
+                      : undefined
+                  }
+                />
+                <StatCell
+                  label="Ground speed"
+                  value={
+                    selected.velocity != null
+                      ? Math.round(selected.velocity * 1.944).toString()
+                      : "—"
+                  }
+                  unit={selected.velocity != null ? "kts" : undefined}
+                  sub={
+                    selected.velocity != null
+                      ? `${Math.round(selected.velocity * 3.6)} km/h`
+                      : undefined
+                  }
+                />
+                <StatCell
+                  label="Heading"
+                  value={selected.heading != null ? `${Math.round(selected.heading)}°` : "—"}
+                />
+                <StatCell
+                  label="Vertical rate"
+                  value={
+                    selected.verticalRate != null
+                      ? `${selected.verticalRate > 0 ? "+" : ""}${Math.round(selected.verticalRate)}`
+                      : "—"
+                  }
+                  unit={selected.verticalRate != null ? "m/s" : undefined}
+                />
+              </div>
+
+              {/* Position row */}
+              <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400 tracking-tight">
+                <span className="text-slate-400 dark:text-slate-500 uppercase tracking-[0.12em] text-[9.5px] font-semibold mr-2">
+                  POS
+                </span>
+                {selected.latitude.toFixed(4)}, {selected.longitude.toFixed(4)}
+              </div>
+
+              {/* Aircraft details */}
+              {(aircraftInfo || infoLoading) && (
+                <div className="pt-3 border-t border-black/[0.08] dark:border-white/[0.08]">
+                  <div className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-[0.12em] mb-2">
+                    Aircraft
+                  </div>
+                  {infoLoading ? (
+                    <div className="text-[11px] text-fr24-yellow animate-pulse">
+                      Loading aircraft details…
+                    </div>
+                  ) : aircraftInfo ? (
+                    <div>
+                      {aircraftInfo.registration && (
+                        <MetaRow k="Registration" v={aircraftInfo.registration} mono />
+                      )}
+                      {aircraftInfo.model && <MetaRow k="Model" v={aircraftInfo.model} />}
+                      {aircraftInfo.manufacturerName && (
+                        <MetaRow k="Manufacturer" v={aircraftInfo.manufacturerName} />
+                      )}
+                      {aircraftInfo.operator && <MetaRow k="Operator" v={aircraftInfo.operator} />}
+                      {aircraftInfo.owner &&
+                        aircraftInfo.owner !== aircraftInfo.operator && (
+                          <MetaRow k="Owner" v={aircraftInfo.owner} />
                         )}
-                        <span className="text-slate-400 dark:text-gray-600 text-[10px]">
-                          {new Date(wp.time * 1000).toLocaleTimeString([], {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
+                      {aircraftInfo.built && <MetaRow k="Built" v={aircraftInfo.built} />}
+                      {aircraftInfo.categoryDescription && (
+                        <MetaRow k="Category" v={aircraftInfo.categoryDescription} />
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-[11px] text-slate-400 dark:text-slate-500">
+                      No aircraft details available
+                    </div>
+                  )}
                 </div>
-              </div>
-            )}
-
-            {trackPath.length === 0 && !trackLoading && (
-              <div className="p-4 text-center text-sm text-slate-400 dark:text-gray-600">
-                No track data available.
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </div>
       )}
+
+      {/* ============ BOTTOM LIVE BAR ============ */}
+      <div
+        className={`absolute left-1/2 -translate-x-1/2 z-[900] transition-all duration-200 ${
+          selected ? "bottom-[62vh] md:bottom-4" : "bottom-4"
+        }`}
+      >
+        <div className="flex items-center gap-3 px-4 py-2 rounded-xl bg-white/95 dark:bg-[#161920]/95 backdrop-blur-xl border border-black/10 dark:border-white/10 text-[11.5px] shadow-lg">
+          <span className="flex items-center gap-1.5 text-fr24-yellow font-semibold tracking-[0.08em]">
+            <span className="w-[6px] h-[6px] rounded-full bg-fr24-yellow shadow-[0_0_6px_#FBD200] animate-blink" />
+            LIVE
+          </span>
+          <span className="text-slate-300 dark:text-slate-600">·</span>
+          <span className="text-slate-600 dark:text-slate-300">
+            <strong className="text-slate-900 dark:text-white font-semibold">
+              {count.toLocaleString()}
+            </strong>
+            {" aircraft"}
+            {searchMode && " found"}
+          </span>
+          {loading && (
+            <>
+              <span className="text-slate-300 dark:text-slate-600">·</span>
+              <span className="text-fr24-yellow animate-pulse">loading…</span>
+            </>
+          )}
+          {lastUpdate && !loading && (
+            <>
+              <span className="text-slate-300 dark:text-slate-600 hidden sm:inline">·</span>
+              <span className="text-slate-500 dark:text-slate-400 hidden sm:inline">
+                updated{" "}
+                <strong className="text-slate-900 dark:text-white font-medium">
+                  {lastUpdate}
+                </strong>
+              </span>
+            </>
+          )}
+          {error && (
+            <>
+              <span className="text-slate-300 dark:text-slate-600">·</span>
+              <span className="text-red-500 dark:text-red-400">{error}</span>
+            </>
+          )}
+        </div>
+      </div>
     </main>
   );
 }
 
 // --- Sub-components ---
 
-function SectionTitle({ children }: { children: React.ReactNode }) {
+function FilterChip({ children }: { children: React.ReactNode }) {
   return (
-    <div className="text-[11px] text-slate-400 dark:text-gray-500 font-semibold uppercase tracking-wider">
+    <div className="px-2.5 py-1.5 rounded-lg text-[12px] bg-white/85 dark:bg-[#161920]/85 backdrop-blur-xl border border-black/10 dark:border-white/10 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white cursor-pointer transition-colors">
       {children}
     </div>
   );
 }
 
-function InfoCell({
+function StatCell({
   label,
   value,
+  unit,
   sub,
 }: {
   label: string;
   value: string;
+  unit?: string;
   sub?: string;
 }) {
   return (
-    <div>
-      <div className="text-slate-400 dark:text-gray-500 text-[11px] uppercase tracking-wide">{label}</div>
-      <div className="text-slate-900 dark:text-white font-medium text-sm">
-        {value}
-        {sub && <span className="text-slate-400 dark:text-gray-500 ml-1 font-normal text-xs">{sub}</span>}
+    <div className="bg-white dark:bg-[#161920] px-3 py-2.5">
+      <div className="text-[9.5px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-[0.12em]">
+        {label}
       </div>
+      <div className="text-[17px] font-semibold text-slate-900 dark:text-slate-100 mt-0.5 tracking-tight tabular-nums">
+        {value}
+        {unit && (
+          <span className="text-[10.5px] font-medium text-slate-400 dark:text-slate-500 ml-1">
+            {unit}
+          </span>
+        )}
+      </div>
+      {sub && (
+        <div className="text-[10.5px] text-slate-500 dark:text-slate-400 mt-0.5 tabular-nums">
+          {sub}
+        </div>
+      )}
     </div>
   );
 }
 
-function InfoMini({ label, value }: { label: string; value: string }) {
+function MetaRow({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
   return (
-    <div>
-      <div className="text-slate-400 dark:text-gray-600 text-[10px]">{label}</div>
-      <div className="text-slate-600 dark:text-gray-300 text-xs">{value}</div>
+    <div className="flex justify-between items-baseline py-1.5 border-b border-black/[0.04] dark:border-white/[0.04] last:border-b-0 text-[12px]">
+      <span className="text-slate-500 dark:text-slate-400">{k}</span>
+      <span
+        className={`text-slate-900 dark:text-slate-100 font-medium ${mono ? "font-mono" : ""}`}
+      >
+        {v}
+      </span>
     </div>
   );
 }

@@ -9,7 +9,16 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        dark: "#0a0a1a",
+        dark: "#14161a",
+        fr24: {
+          yellow: "#FBD200",
+          orange: "#FF7A00",
+          blue: "#5AB0FF",
+          red: "#E84545",
+        },
+      },
+      fontFamily: {
+        sans: ["var(--font-inter)", "ui-sans-serif", "system-ui", "sans-serif"],
       },
     },
   },
