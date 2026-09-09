@@ -3,7 +3,6 @@
 import { useEffect, useRef, useCallback } from "react";
 import type { Map as LeafletMap, LayerGroup, TileLayer } from "leaflet";
 import { AircraftState, TrackWaypoint } from "@/lib/types";
-import { useTheme } from "@/lib/theme-context";
 
 interface Props {
   aircraft: AircraftState[];
@@ -37,7 +36,7 @@ export default function TrackingMap({
   const planeLayerRef = useRef<LayerGroup | null>(null);
   const trackLayerRef = useRef<LayerGroup | null>(null);
   const tileLayerRef = useRef<TileLayer | null>(null);
-  const { theme } = useTheme();
+  const labelLayerRef = useRef<TileLayer | null>(null);
   const onSelectRef = useRef(onSelectAircraft);
   onSelectRef.current = onSelectAircraft;
   const onBoundsRef = useRef(onBoundsChange);
@@ -109,9 +108,17 @@ export default function TrackingMap({
         worldCopyJump: true,
       });
 
+      // Esri Firefly Imagery Hybrid: Firefly imagery + boundaries/places labels
       tileLayerRef.current = L.tileLayer(
-        "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
-        { subdomains: "abcd", maxZoom: 19 }
+        "https://fly.maptiles.arcgis.com/arcgis/rest/services/World_Imagery_Firefly/MapServer/tile/{z}/{y}/{x}",
+        {
+          maxZoom: 19,
+          attribution: "Esri, Maxar, Earthstar Geographics",
+        }
+      ).addTo(map);
+      labelLayerRef.current = L.tileLayer(
+        "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
+        { maxZoom: 19 }
       ).addTo(map);
 
       planeLayerRef.current = L.layerGroup().addTo(map);
@@ -136,25 +143,6 @@ export default function TrackingMap({
       cancelled = true;
     };
   }, [emitBounds]);
-
-  // --- Swap tile layer on theme change ---
-  useEffect(() => {
-    const L = LRef.current;
-    const map = mapRef.current;
-    if (!L || !map) return;
-
-    if (tileLayerRef.current) {
-      map.removeLayer(tileLayerRef.current);
-    }
-    const url =
-      theme === "dark"
-        ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-        : "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png";
-    tileLayerRef.current = L.tileLayer(url, {
-      subdomains: "abcd",
-      maxZoom: 19,
-    }).addTo(map);
-  }, [theme]);
 
   // --- Draw aircraft ---
   useEffect(() => {
