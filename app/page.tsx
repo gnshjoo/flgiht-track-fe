@@ -11,6 +11,7 @@ import {
   fetchTrack,
   fetchAirport,
 } from "@/lib/api";
+import { applySnapshot, type MotionMap } from "@/lib/motion";
 import { useNow } from "@/lib/useNow";
 import ThemeToggle from "@/components/ThemeToggle";
 import FirstLoadOverlay from "@/components/FirstLoadOverlay";
@@ -44,10 +45,15 @@ export default function TrackingPage() {
   const boundsRef = useRef<Bounds | null>(null);
   const selectedIcaoRef = useRef<string | null>(null);
   const loadingRef = useRef(false);
+  const motionRef = useRef<MotionMap>(new Map());
   const now = useNow(1000);
 
   const loadFeed = useCallback(
-    async (request: (signal: AbortSignal) => Promise<AircraftResponse>, failMessage: string) => {
+    async (
+      request: (signal: AbortSignal) => Promise<AircraftResponse>,
+      failMessage: string,
+      replace = false
+    ) => {
       fetchRef.current?.abort();
       const ctrl = new AbortController();
       fetchRef.current = ctrl;
@@ -59,15 +65,23 @@ export default function TrackingPage() {
       setFeed((f) => (f.status === "live" ? { ...f, refreshing: true } : f));
       try {
         const data = await request(ctrl.signal);
+        const poll: PollMeta = {
+          time: data.time,
+          servedAt: data.servedAt ?? data.time,
+          receivedAt: Date.now(),
+          partial: data.partial ?? false,
+        };
+        motionRef.current = applySnapshot(
+          motionRef.current,
+          data.aircraft,
+          poll,
+          poll.receivedAt,
+          replace
+        );
         setFeed({
           status: "live",
           aircraft: data.aircraft,
-          poll: {
-            time: data.time,
-            servedAt: data.servedAt ?? data.time,
-            receivedAt: Date.now(),
-            partial: data.partial ?? false,
-          },
+          poll,
           refreshing: false,
           staleError: null,
         });
@@ -111,7 +125,7 @@ export default function TrackingPage() {
       }
       setSearchMode(true);
       if (timerRef.current) clearInterval(timerRef.current);
-      loadFeed((signal) => fetchAircraftByCallsign(query.trim(), signal), "Search failed.");
+      loadFeed((signal) => fetchAircraftByCallsign(query.trim(), signal), "Search failed.", true);
     },
     [loadFeed, reload]
   );
@@ -172,6 +186,7 @@ export default function TrackingPage() {
     <main className="relative w-screen h-screen overflow-hidden bg-slate-100 dark:bg-[#14161a]">
       <TrackingMap
         aircraft={aircraft}
+        motionRef={motionRef}
         selected={selected}
         route={route}
         onSelectAircraft={handleSelect}

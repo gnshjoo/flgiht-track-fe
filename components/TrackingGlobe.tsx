@@ -3,9 +3,12 @@
 import { useEffect, useRef, useCallback } from "react";
 import type { DivIcon, Map as LeafletMap, LayerGroup, Marker, TileLayer } from "leaflet";
 import { AircraftState, Bounds, Route } from "@/lib/types";
-import { trackLine, unwrapLng } from "@/lib/track";
+import { positionAt, type MotionMap } from "@/lib/motion";
+import { trackLine, unwrapLng, type LatLng } from "@/lib/track";
 
 type L = typeof import("leaflet");
+
+const FRAME_MS = 100;
 
 const glyphSize = (sel: boolean, isMobile: boolean) => (sel ? 28 : isMobile ? 26 : 20);
 const iconBox = (sel: boolean, isMobile: boolean) =>
@@ -41,7 +44,9 @@ function planeIcon(L: L, heading: number | null, sel: boolean, isMobile: boolean
 }
 
 interface Props {
+  /** Changes once per poll; the marker set itself comes from `motionRef`. */
   aircraft: AircraftState[];
+  motionRef: React.RefObject<MotionMap>;
   selected: AircraftState | null;
   route: Route | null;
   onSelectAircraft: (aircraft: AircraftState | null) => void;
@@ -50,6 +55,7 @@ interface Props {
 
 export default function TrackingMap({
   aircraft,
+  motionRef,
   selected,
   route,
   onSelectAircraft,
@@ -69,8 +75,6 @@ export default function TrackingMap({
   const isFlyingRef = useRef(false);
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
-  const aircraftRef = useRef(aircraft);
-  aircraftRef.current = aircraft;
   const markersRef = useRef(new Map<string, { marker: Marker; key: string }>());
 
   // Emit current bounds
@@ -171,12 +175,23 @@ export default function TrackingMap({
     if (!L || !layer) return;
 
     // 선택된 비행기가 있으면 해당 비행기만 표시
-    const visible = selected ? [selected] : aircraft;
+    const now = Date.now();
+    const motion = motionRef.current;
+    const visible: { ac: AircraftState; pos: LatLng }[] = [];
+    if (selected) {
+      const m = motion.get(selected.icao24);
+      visible.push({
+        ac: selected,
+        pos: m ? positionAt(m, now) : { lat: selected.latitude, lng: selected.longitude },
+      });
+    } else {
+      motion.forEach((m) => visible.push({ ac: m.state, pos: positionAt(m, now) }));
+    }
     const isMobile = window.matchMedia("(max-width: 768px)").matches;
     const markers = markersRef.current;
     const visibleIds = new Set<string>();
 
-    for (const ac of visible) {
+    for (const { ac, pos } of visible) {
       visibleIds.add(ac.icao24);
       const sel = ac.icao24 === selected?.icao24;
       const key = `${ac.heading ?? 0}|${sel}|${isMobile}`;
@@ -185,7 +200,7 @@ export default function TrackingMap({
 
       if (!entry) {
         const icon = planeIcon(L, ac.heading, sel, isMobile);
-        const marker = L.marker([ac.latitude, ac.longitude], {
+        const marker = L.marker([pos.lat, pos.lng], {
           icon,
           zIndexOffset: sel ? 1000 : 0,
         });
@@ -201,8 +216,8 @@ export default function TrackingMap({
           if (selectedRef.current?.icao24 === ac.icao24) {
             onSelectRef.current(null);
           } else {
-            const live = aircraftRef.current.find((a) => a.icao24 === ac.icao24);
-            if (live) onSelectRef.current(live);
+            const live = motionRef.current.get(ac.icao24);
+            if (live) onSelectRef.current(live.state);
           }
         });
         marker.addTo(layer);
@@ -211,7 +226,7 @@ export default function TrackingMap({
       }
 
       const { marker } = entry;
-      marker.setLatLng([ac.latitude, ac.longitude]);
+      marker.setLatLng([pos.lat, pos.lng]);
       if (entry.key !== key) {
         const icon = planeIcon(L, ac.heading, sel, isMobile);
         marker.setIcon(icon);
@@ -228,7 +243,39 @@ export default function TrackingMap({
       layer.removeLayer(marker);
       markers.delete(id);
     });
-  }, [aircraft, selected]);
+  }, [aircraft, selected, motionRef]);
+
+  useEffect(() => {
+    let raf = 0;
+    let last = 0;
+    const tick = (t: number) => {
+      raf = requestAnimationFrame(tick);
+      if (t - last < FRAME_MS) return;
+      last = t;
+      const map = mapRef.current;
+      if (!map) return;
+      const now = Date.now();
+      const view = map.getBounds().pad(0.2);
+      const motion = motionRef.current;
+      markersRef.current.forEach(({ marker }, id) => {
+        const m = motion.get(id);
+        if (!m || !view.contains(marker.getLatLng())) return;
+        const p = positionAt(m, now);
+        marker.setLatLng([p.lat, p.lng]);
+      });
+    };
+    // Positions come from the wall clock, so resuming after a hidden tab needs no catch-up.
+    const onVisibility = () => {
+      cancelAnimationFrame(raf);
+      if (!document.hidden) raf = requestAnimationFrame(tick);
+    };
+    onVisibility();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      cancelAnimationFrame(raf);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [motionRef]);
 
   useEffect(() => {
     const L = LRef.current;
