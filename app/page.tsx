@@ -409,6 +409,12 @@ export default function TrackingPage() {
               </strong>{" "}
               ago
             </span>
+            {feed.poll.partial && (
+              <>
+                <span className="text-slate-300 dark:text-slate-600 hidden sm:inline">·</span>
+                <span className="text-fr24-orange">Zoom in to see every aircraft</span>
+              </>
+            )}
             {feed.refreshing && <span className="text-fr24-yellow animate-pulse">updating…</span>}
             {feed.staleError && (
               <>
