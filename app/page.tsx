@@ -11,7 +11,7 @@ import {
   fetchTrack,
   fetchAirport,
 } from "@/lib/api";
-import { applySnapshot, type MotionMap } from "@/lib/motion";
+import { applySnapshot, liveState, type MotionMap } from "@/lib/motion";
 import { useNow } from "@/lib/useNow";
 import ThemeToggle from "@/components/ThemeToggle";
 import FirstLoadOverlay from "@/components/FirstLoadOverlay";
@@ -181,6 +181,8 @@ export default function TrackingPage() {
   const aircraft = feed.status === "live" ? feed.aircraft : NO_AIRCRAFT;
   const selected =
     selection && (aircraft.find((a) => a.icao24 === selection.icao24) ?? selection.snapshot);
+  const selectedMotion = selected && motionRef.current.get(selected.icao24);
+  const livePos = selectedMotion ? liveState(selectedMotion, now) : selected;
 
   return (
     <main className="relative w-screen h-screen overflow-hidden bg-slate-100 dark:bg-[#14161a]">
@@ -356,7 +358,7 @@ export default function TrackingPage() {
                 <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400 dark:text-slate-500 mr-2">
                   POS
                 </span>
-                {selected.latitude.toFixed(4)}, {selected.longitude.toFixed(4)}
+                {livePos!.latitude.toFixed(4)}, {livePos!.longitude.toFixed(4)}
               </div>
 
               {/* Aircraft details */}

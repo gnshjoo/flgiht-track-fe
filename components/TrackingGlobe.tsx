@@ -1,14 +1,27 @@
 "use client";
 
 import { useEffect, useRef, useCallback } from "react";
-import type { DivIcon, Map as LeafletMap, LayerGroup, Marker, TileLayer } from "leaflet";
-import { AircraftState, Bounds, Route } from "@/lib/types";
+import type { DivIcon, Map as LeafletMap, LayerGroup, Marker, Polyline, TileLayer } from "leaflet";
+import { AircraftState, Bounds, Route, TrackWaypoint } from "@/lib/types";
 import { positionAt, type MotionMap } from "@/lib/motion";
 import { trackLine, unwrapLng, type LatLng } from "@/lib/track";
 
 type L = typeof import("leaflet");
 
 const FRAME_MS = 100;
+
+type TrackLayers = {
+  icao24: string;
+  path: TrackWaypoint[];
+  lines: Polyline[];
+  projected: { line: Polyline; arrival: LatLng } | null;
+};
+
+function livePosition(sel: AircraftState | null, icao24: string, motion: MotionMap): LatLng | null {
+  if (!sel || sel.icao24 !== icao24) return null;
+  const m = motion.get(icao24);
+  return m ? positionAt(m, Date.now()) : { lat: sel.latitude, lng: sel.longitude };
+}
 
 const glyphSize = (sel: boolean, isMobile: boolean) => (sel ? 28 : isMobile ? 26 : 20);
 const iconBox = (sel: boolean, isMobile: boolean) =>
@@ -76,6 +89,7 @@ export default function TrackingMap({
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
   const markersRef = useRef(new Map<string, { marker: Marker; key: string }>());
+  const trackRef = useRef<TrackLayers | null>(null);
 
   // Emit current bounds
   const emitBounds = useCallback(() => {
@@ -263,6 +277,16 @@ export default function TrackingMap({
         const p = positionAt(m, now);
         marker.setLatLng([p.lat, p.lng]);
       });
+
+      const track = trackRef.current;
+      const pos = track && livePosition(selectedRef.current, track.icao24, motion);
+      if (!track || !pos) return;
+      const line = trackLine(track.path, pos);
+      for (const l of track.lines) l.setLatLngs(line);
+      if (track.projected) {
+        const { line: dashed, arrival } = track.projected;
+        dashed.setLatLngs([line[line.length - 1], { lat: arrival.lat, lng: unwrapLng(arrival.lng, line[line.length - 1].lng) }]);
+      }
     };
     // Positions come from the wall clock, so resuming after a hidden tab needs no catch-up.
     const onVisibility = () => {
@@ -283,17 +307,15 @@ export default function TrackingMap({
     if (!L || !layer) return;
 
     layer.clearLayers();
+    trackRef.current = null;
     if (!route) return;
 
-    const sel = selectedRef.current;
-    const live =
-      sel && sel.icao24 === route.icao24 ? { lat: sel.latitude, lng: sel.longitude } : null;
-    const line = trackLine(route.path, live);
+    const line = trackLine(route.path, livePosition(selectedRef.current, route.icao24, motionRef.current));
     if (line.length < 2) return;
     const latlngs = line.map((p) => L.latLng(p.lat, p.lng));
 
     // Traveled path - Glow (FR24 yellow halo)
-    L.polyline(latlngs, {
+    const glow = L.polyline(latlngs, {
       color: "#FBD200",
       weight: 6,
       opacity: 0.18,
@@ -302,13 +324,20 @@ export default function TrackingMap({
     }).addTo(layer);
 
     // Traveled path - Main solid line
-    L.polyline(latlngs, {
+    const main = L.polyline(latlngs, {
       color: "#FBD200",
       weight: 2.5,
       opacity: 0.9,
       lineCap: "round",
       lineJoin: "round",
     }).addTo(layer);
+    const track: TrackLayers = {
+      icao24: route.icao24,
+      path: route.path,
+      lines: [glow, main],
+      projected: null,
+    };
+    trackRef.current = track;
 
     // Departure airport marker — FR24 classic: yellow dot + label chip
     const dep = line[0];
@@ -330,7 +359,7 @@ export default function TrackingMap({
       const arrLng = unwrapLng(route.arrivalCoords.lng, cur.lng);
 
       // Projected route - dashed FR24 orange, faint
-      L.polyline([L.latLng(cur.lat, cur.lng), L.latLng(route.arrivalCoords.lat, arrLng)], {
+      const projected = L.polyline([L.latLng(cur.lat, cur.lng), L.latLng(route.arrivalCoords.lat, arrLng)], {
         color: "#FF7A00",
         weight: 2,
         opacity: 0.5,
@@ -338,6 +367,7 @@ export default function TrackingMap({
         lineCap: "round",
         lineJoin: "round",
       }).addTo(layer);
+      track.projected = { line: projected, arrival: { lat: route.arrivalCoords.lat, lng: arrLng } };
 
       // Arrival airport marker — FR24 orange
       const arrLabel = route.arrival ?? "ARR";
@@ -352,17 +382,14 @@ export default function TrackingMap({
         zIndexOffset: 900,
       }).addTo(layer);
     }
-  }, [route, selected?.latitude, selected?.longitude]);
+  }, [route, motionRef]);
 
   useEffect(() => {
     const L = LRef.current;
     const map = mapRef.current;
     if (!L || !map || route?.status !== "ready") return;
 
-    const sel = selectedRef.current;
-    const live =
-      sel && sel.icao24 === route.icao24 ? { lat: sel.latitude, lng: sel.longitude } : null;
-    const line = trackLine(route.path, live);
+    const line = trackLine(route.path, livePosition(selectedRef.current, route.icao24, motionRef.current));
     if (line.length < 2) return;
     const points = line.map((p) => L.latLng(p.lat, p.lng));
     if (route.arrivalCoords) {
@@ -382,7 +409,7 @@ export default function TrackingMap({
       duration: 1,
     });
     setTimeout(() => { isFlyingRef.current = false; }, 1200);
-  }, [route]);
+  }, [route, motionRef]);
 
   return (
     <div
