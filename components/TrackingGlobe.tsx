@@ -1,9 +1,44 @@
 "use client";
 
 import { useEffect, useRef, useCallback } from "react";
-import type { Map as LeafletMap, LayerGroup, TileLayer } from "leaflet";
+import type { DivIcon, Map as LeafletMap, LayerGroup, Marker, TileLayer } from "leaflet";
 import { AircraftState, Bounds, Route } from "@/lib/types";
 import { trackLine, unwrapLng } from "@/lib/track";
+
+type L = typeof import("leaflet");
+
+const glyphSize = (sel: boolean, isMobile: boolean) => (sel ? 28 : isMobile ? 26 : 20);
+const iconBox = (sel: boolean, isMobile: boolean) =>
+  glyphSize(sel, isMobile) + (sel || isMobile ? 12 : 0);
+
+// FR24-style top-down plane silhouette (nose up → heading 0° = north)
+function planeIcon(L: L, heading: number | null, sel: boolean, isMobile: boolean): DivIcon {
+  const color = sel ? "#FF7A00" : "#FBD200";
+  const sz = glyphSize(sel, isMobile);
+  const glow = sel
+    ? "drop-shadow(0 0 4px rgba(255,122,0,.9)) drop-shadow(0 0 2px rgba(0,0,0,.7))"
+    : "drop-shadow(0 0 2px rgba(0,0,0,.8))";
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${sz}" height="${sz}" viewBox="0 0 32 32" fill="${color}" style="transform:rotate(${heading ?? 0}deg);filter:${glow}"><path d="M16 2 C 15.4 2 14.8 2.7 14.6 4 L 14 10 L 2 15.5 L 2 17.5 L 14 15 L 13.7 22 L 9.5 24 L 9.5 25.5 L 16 24 L 22.5 25.5 L 22.5 24 L 18.3 22 L 18 15 L 30 17.5 L 30 15.5 L 18 10 L 17.4 4 C 17.2 2.7 16.6 2 16 2 Z"/></svg>`;
+
+  // Wrap in a larger touch target on mobile; pulse halo on selected
+  let html: string;
+  if (sel) {
+    html = `<div style="width:${sz + 12}px;height:${sz + 12}px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;animation:plane-pulse 1.8s ease-in-out infinite">${svg}</div>`;
+  } else if (isMobile) {
+    html = `<div style="padding:6px;display:inline-flex;align-items:center;justify-content:center">${svg}</div>`;
+  } else {
+    html = svg;
+  }
+
+  const total = iconBox(sel, isMobile);
+  return L.divIcon({
+    className: "",
+    iconSize: [total, total],
+    iconAnchor: [total / 2, total / 2],
+    html,
+  });
+}
 
 interface Props {
   aircraft: AircraftState[];
@@ -34,6 +69,9 @@ export default function TrackingMap({
   const isFlyingRef = useRef(false);
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
+  const aircraftRef = useRef(aircraft);
+  aircraftRef.current = aircraft;
+  const markersRef = useRef(new Map<string, { marker: Marker; key: string }>());
 
   // Emit current bounds
   const emitBounds = useCallback(() => {
@@ -130,70 +168,69 @@ export default function TrackingMap({
     };
   }, [emitBounds]);
 
-  // --- Draw aircraft ---
+  // --- Draw aircraft: diff markers by icao24 so tooltips and hover survive a refresh ---
   useEffect(() => {
     const L = LRef.current;
     const layer = planeLayerRef.current;
     if (!L || !layer) return;
 
-    layer.clearLayers();
-
     // 선택된 비행기가 있으면 해당 비행기만 표시
     const visible = selected ? [selected] : aircraft;
-
     const isMobile = window.matchMedia("(max-width: 768px)").matches;
+    const markers = markersRef.current;
+    const visibleIds = new Set<string>();
 
-    visible.forEach((ac) => {
+    for (const ac of visible) {
+      visibleIds.add(ac.icao24);
       const sel = ac.icao24 === selected?.icao24;
-      const color = sel ? "#FF7A00" : "#FBD200";
-      const sz = sel ? 28 : isMobile ? 26 : 20;
-      const glow = sel
-        ? "drop-shadow(0 0 4px rgba(255,122,0,.9)) drop-shadow(0 0 2px rgba(0,0,0,.7))"
-        : "drop-shadow(0 0 2px rgba(0,0,0,.8))";
+      const key = `${ac.heading ?? 0}|${sel}|${isMobile}`;
+      const label = ac.callsign?.trim() || ac.icao24;
+      const entry = markers.get(ac.icao24);
 
-      // FR24-style top-down plane silhouette (nose up → heading 0° = north)
-      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${sz}" height="${sz}" viewBox="0 0 32 32" fill="${color}" style="transform:rotate(${ac.heading ?? 0}deg);filter:${glow}"><path d="M16 2 C 15.4 2 14.8 2.7 14.6 4 L 14 10 L 2 15.5 L 2 17.5 L 14 15 L 13.7 22 L 9.5 24 L 9.5 25.5 L 16 24 L 22.5 25.5 L 22.5 24 L 18.3 22 L 18 15 L 30 17.5 L 30 15.5 L 18 10 L 17.4 4 C 17.2 2.7 16.6 2 16 2 Z"/></svg>`;
-
-      // Wrap in a larger touch target on mobile; pulse halo on selected
-      let html: string;
-      if (sel) {
-        html = `<div style="width:${sz + 12}px;height:${sz + 12}px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;animation:plane-pulse 1.8s ease-in-out infinite">${svg}</div>`;
-      } else if (isMobile) {
-        html = `<div style="padding:6px;display:inline-flex;align-items:center;justify-content:center">${svg}</div>`;
-      } else {
-        html = svg;
-      }
-
-      const total = sel ? sz + 12 : isMobile ? sz + 12 : sz;
-      const icon = L.divIcon({
-        className: "",
-        iconSize: [total, total],
-        iconAnchor: [total / 2, total / 2],
-        html,
-      });
-
-      const m = L.marker([ac.latitude, ac.longitude], {
-        icon,
-        zIndexOffset: sel ? 1000 : 0,
-      });
-
-      if (!isMobile) {
-        m.bindTooltip(ac.callsign?.trim() || ac.icao24, {
-          direction: "top",
-          offset: L.point(0, -total / 2),
-          className: "plane-tooltip",
+      if (!entry) {
+        const icon = planeIcon(L, ac.heading, sel, isMobile);
+        const marker = L.marker([ac.latitude, ac.longitude], {
+          icon,
+          zIndexOffset: sel ? 1000 : 0,
         });
+        if (!isMobile) {
+          marker.bindTooltip(label, {
+            direction: "top",
+            offset: L.point(0, -iconBox(sel, isMobile) / 2),
+            className: "plane-tooltip",
+          });
+        }
+        marker.on("click", () => {
+          // 이미 선택된 비행기를 다시 클릭하면 선택 해제
+          if (selectedRef.current?.icao24 === ac.icao24) {
+            onSelectRef.current(null);
+          } else {
+            const live = aircraftRef.current.find((a) => a.icao24 === ac.icao24);
+            if (live) onSelectRef.current(live);
+          }
+        });
+        marker.addTo(layer);
+        markers.set(ac.icao24, { marker, key });
+        continue;
       }
 
-      m.on("click", () => {
-        // 이미 선택된 비행기를 다시 클릭하면 선택 해제
-        if (sel) {
-          onSelectRef.current(null);
-        } else {
-          onSelectRef.current(ac);
-        }
-      });
-      layer.addLayer(m);
+      const { marker } = entry;
+      marker.setLatLng([ac.latitude, ac.longitude]);
+      if (entry.key !== key) {
+        const icon = planeIcon(L, ac.heading, sel, isMobile);
+        marker.setIcon(icon);
+        marker.setZIndexOffset(sel ? 1000 : 0);
+        const tooltip = marker.getTooltip();
+        if (tooltip) tooltip.options.offset = L.point(0, -iconBox(sel, isMobile) / 2);
+        entry.key = key;
+      }
+      if (marker.getTooltip()?.getContent() !== label) marker.setTooltipContent(label);
+    }
+
+    markers.forEach(({ marker }, id) => {
+      if (visibleIds.has(id)) return;
+      layer.removeLayer(marker);
+      markers.delete(id);
     });
   }, [aircraft, selected]);
 
