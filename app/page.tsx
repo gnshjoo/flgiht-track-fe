@@ -2,7 +2,7 @@
 
 import { useState, useRef, useCallback } from "react";
 import dynamic from "next/dynamic";
-import { AircraftInfo, AircraftResponse, AircraftState, Bounds, Feed, Route } from "@/lib/types";
+import { AircraftInfo, AircraftResponse, AircraftState, Bounds, Feed, PollMeta, Route } from "@/lib/types";
 import { PLANE_PATH } from "@/lib/plane";
 import {
   fetchAircraft,
@@ -11,6 +11,7 @@ import {
   fetchTrack,
   fetchAirport,
 } from "@/lib/api";
+import { useNow } from "@/lib/useNow";
 import ThemeToggle from "@/components/ThemeToggle";
 import FirstLoadOverlay from "@/components/FirstLoadOverlay";
 
@@ -28,6 +29,7 @@ type Selection = { icao24: string; snapshot: AircraftState } | null;
 const NO_AIRCRAFT: AircraftState[] = [];
 // A cold backend on Vercel can take 20 s; past this the request is a failure, not a wait.
 const FETCH_TIMEOUT_MS = 45_000;
+const POLL_MS = 10_000;
 
 export default function TrackingPage() {
   const [feed, setFeed] = useState<Feed>(() => ({ status: "waking", startedAt: Date.now() }));
@@ -41,12 +43,15 @@ export default function TrackingPage() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const boundsRef = useRef<Bounds | null>(null);
   const selectedIcaoRef = useRef<string | null>(null);
+  const loadingRef = useRef(false);
+  const now = useNow(1000);
 
   const loadFeed = useCallback(
     async (request: (signal: AbortSignal) => Promise<AircraftResponse>, failMessage: string) => {
       fetchRef.current?.abort();
       const ctrl = new AbortController();
       fetchRef.current = ctrl;
+      loadingRef.current = true;
       const timer = setTimeout(
         () => ctrl.abort(new DOMException("timeout", "TimeoutError")),
         FETCH_TIMEOUT_MS
@@ -57,7 +62,12 @@ export default function TrackingPage() {
         setFeed({
           status: "live",
           aircraft: data.aircraft,
-          updatedAt: new Date(),
+          poll: {
+            time: data.time,
+            servedAt: data.servedAt ?? data.time,
+            receivedAt: Date.now(),
+            partial: data.partial ?? false,
+          },
           refreshing: false,
           staleError: null,
         });
@@ -70,6 +80,7 @@ export default function TrackingPage() {
         );
       } finally {
         clearTimeout(timer);
+        if (fetchRef.current === ctrl) loadingRef.current = false;
       }
     },
     []
@@ -110,7 +121,10 @@ export default function TrackingPage() {
       boundsRef.current = bounds;
       loadForBounds(bounds);
       if (timerRef.current) clearInterval(timerRef.current);
-      timerRef.current = setInterval(reload, 60000);
+      // A slow cold-start request must not be aborted by the next tick.
+      timerRef.current = setInterval(() => {
+        if (!loadingRef.current) reload();
+      }, POLL_MS);
     },
     [loadForBounds, reload]
   );
@@ -388,16 +402,14 @@ export default function TrackingPage() {
               {searchMode && " found"}
             </span>
             <span className="text-slate-300 dark:text-slate-600 hidden sm:inline">·</span>
-            {feed.refreshing ? (
-              <span className="text-fr24-yellow animate-pulse">updating…</span>
-            ) : (
-              <span className="text-slate-500 dark:text-slate-400 hidden sm:inline">
-                updated{" "}
-                <strong className="text-slate-900 dark:text-white font-medium">
-                  {feed.updatedAt.toLocaleTimeString()}
-                </strong>
-              </span>
-            )}
+            <span className="text-slate-500 dark:text-slate-400 hidden sm:inline tabular-nums">
+              updated{" "}
+              <strong className="text-slate-900 dark:text-white font-medium">
+                {dataAgeSeconds(feed.poll, now)} s
+              </strong>{" "}
+              ago
+            </span>
+            {feed.refreshing && <span className="text-fr24-yellow animate-pulse">updating…</span>}
             {feed.staleError && (
               <>
                 <span className="text-slate-300 dark:text-slate-600">·</span>
@@ -412,6 +424,11 @@ export default function TrackingPage() {
       )}
     </main>
   );
+}
+
+// Server-side age at delivery plus the time since we received it.
+function dataAgeSeconds(poll: PollMeta, now: number): number {
+  return Math.max(0, Math.round((now - poll.receivedAt) / 1000 + (poll.servedAt - poll.time)));
 }
 
 // --- Sub-components ---

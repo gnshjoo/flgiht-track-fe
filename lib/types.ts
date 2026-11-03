@@ -15,11 +15,14 @@ export interface AircraftState {
   velocity: number | null;
   heading: number | null;
   verticalRate: number | null;
+  seenAt?: number;
 }
 
 export interface AircraftResponse {
   time: number;
   aircraft: AircraftState[];
+  servedAt?: number;
+  partial?: boolean;
 }
 
 export interface TrackWaypoint {
@@ -66,13 +69,23 @@ export interface Route {
   arrivalCoords: { lat: number; lng: number } | null;
 }
 
+export interface PollMeta {
+  /** Oldest contributing fetch, epoch seconds. */
+  time: number;
+  /** Server clock when the snapshot was assembled, epoch seconds. */
+  servedAt: number;
+  /** Client clock when the response arrived, epoch ms. */
+  receivedAt: number;
+  partial: boolean;
+}
+
 export type Feed =
   | { status: "waking"; startedAt: number }
   | { status: "down"; message: string }
   | {
       status: "live";
       aircraft: AircraftState[];
-      updatedAt: Date;
+      poll: PollMeta;
       refreshing: boolean;
       staleError: string | null;
     };
