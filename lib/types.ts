@@ -65,3 +65,14 @@ export interface Route {
   arrival: string | null;
   arrivalCoords: { lat: number; lng: number } | null;
 }
+
+export type Feed =
+  | { status: "waking"; startedAt: number }
+  | { status: "down"; message: string }
+  | {
+      status: "live";
+      aircraft: AircraftState[];
+      updatedAt: Date;
+      refreshing: boolean;
+      staleError: string | null;
+    };

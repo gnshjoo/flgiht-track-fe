@@ -2,7 +2,8 @@
 
 import { useState, useRef, useCallback } from "react";
 import dynamic from "next/dynamic";
-import { AircraftInfo, AircraftState, Bounds, Route } from "@/lib/types";
+import { AircraftInfo, AircraftResponse, AircraftState, Bounds, Feed, Route } from "@/lib/types";
+import { PLANE_PATH } from "@/lib/plane";
 import {
   fetchAircraft,
   fetchAircraftByCallsign,
@@ -11,6 +12,7 @@ import {
   fetchAirport,
 } from "@/lib/api";
 import ThemeToggle from "@/components/ThemeToggle";
+import FirstLoadOverlay from "@/components/FirstLoadOverlay";
 
 const TrackingMap = dynamic(() => import("@/components/TrackingGlobe"), {
   ssr: false,
@@ -21,20 +23,16 @@ const TrackingMap = dynamic(() => import("@/components/TrackingGlobe"), {
   ),
 });
 
-// FR24-style top-down plane silhouette (nose up)
-const PLANE_PATH =
-  "M16 2 C 15.4 2 14.8 2.7 14.6 4 L 14 10 L 2 15.5 L 2 17.5 L 14 15 L 13.7 22 L 9.5 24 L 9.5 25.5 L 16 24 L 22.5 25.5 L 22.5 24 L 18.3 22 L 18 15 L 30 17.5 L 30 15.5 L 18 10 L 17.4 4 C 17.2 2.7 16.6 2 16 2 Z";
-
 type Selection = { icao24: string; snapshot: AircraftState } | null;
 
+const NO_AIRCRAFT: AircraftState[] = [];
+// A cold backend can take 20 s; past this the request is a failure, not a wait.
+const FETCH_TIMEOUT_MS = 45_000;
+
 export default function TrackingPage() {
-  const [aircraft, setAircraft] = useState<AircraftState[]>([]);
+  const [feed, setFeed] = useState<Feed>(() => ({ status: "waking", startedAt: Date.now() }));
   const [selection, setSelection] = useState<Selection>(null);
   const [route, setRoute] = useState<Route | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [lastUpdate, setLastUpdate] = useState("");
-  const [count, setCount] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchMode, setSearchMode] = useState(false);
   const [aircraftInfo, setAircraftInfo] = useState<AircraftInfo | null | undefined>(undefined);
@@ -44,51 +42,68 @@ export default function TrackingPage() {
   const boundsRef = useRef<Bounds | null>(null);
   const selectedIcaoRef = useRef<string | null>(null);
 
-  // Load aircraft for given bounds
-  const loadForBounds = useCallback(async (bounds: Bounds) => {
-    fetchRef.current?.abort();
-    const ctrl = new AbortController();
-    fetchRef.current = ctrl;
-    try {
-      setLoading(true);
-      const data = await fetchAircraft(bounds, ctrl.signal);
-      setAircraft(data.aircraft);
-      setCount(data.aircraft.length);
-      setLastUpdate(new Date().toLocaleTimeString());
-      setError(null);
-    } catch (e: any) {
-      if (e?.name !== "AbortError") setError("Unable to load aircraft data.");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  const handleSearch = useCallback(
-    async (query: string) => {
-      if (!query.trim()) {
-        setSearchMode(false);
-        if (boundsRef.current) loadForBounds(boundsRef.current);
-        return;
-      }
+  // The only writer of `feed`. A newer request supersedes the previous one silently.
+  const loadFeed = useCallback(
+    async (request: (signal: AbortSignal) => Promise<AircraftResponse>, failMessage: string) => {
       fetchRef.current?.abort();
       const ctrl = new AbortController();
       fetchRef.current = ctrl;
+      const timer = setTimeout(
+        () => ctrl.abort(new DOMException("timeout", "TimeoutError")),
+        FETCH_TIMEOUT_MS
+      );
+      setFeed((f) => (f.status === "live" ? { ...f, refreshing: true } : f));
       try {
-        setLoading(true);
-        setSearchMode(true);
-        if (timerRef.current) clearInterval(timerRef.current);
-        const data = await fetchAircraftByCallsign(query.trim(), ctrl.signal);
-        setAircraft(data.aircraft);
-        setCount(data.aircraft.length);
-        setLastUpdate(new Date().toLocaleTimeString());
-        setError(null);
-      } catch (e: any) {
-        if (e?.name !== "AbortError") setError("Search failed.");
+        const data = await request(ctrl.signal);
+        setFeed({
+          status: "live",
+          aircraft: data.aircraft,
+          updatedAt: new Date(),
+          refreshing: false,
+          staleError: null,
+        });
+      } catch {
+        if (ctrl.signal.aborted && ctrl.signal.reason?.name !== "TimeoutError") return;
+        setFeed((f) =>
+          f.status === "live"
+            ? { ...f, refreshing: false, staleError: failMessage }
+            : { status: "down", message: failMessage }
+        );
       } finally {
-        setLoading(false);
+        clearTimeout(timer);
       }
     },
-    [loadForBounds]
+    []
+  );
+
+  const loadForBounds = useCallback(
+    (bounds: Bounds) =>
+      loadFeed((signal) => fetchAircraft(bounds, signal), "Unable to load aircraft data."),
+    [loadFeed]
+  );
+
+  const reload = useCallback(() => {
+    if (boundsRef.current) loadForBounds(boundsRef.current);
+  }, [loadForBounds]);
+
+  const retryFirstLoad = useCallback(() => {
+    if (!boundsRef.current) return;
+    setFeed({ status: "waking", startedAt: Date.now() });
+    loadForBounds(boundsRef.current);
+  }, [loadForBounds]);
+
+  const handleSearch = useCallback(
+    (query: string) => {
+      if (!query.trim()) {
+        setSearchMode(false);
+        reload();
+        return;
+      }
+      setSearchMode(true);
+      if (timerRef.current) clearInterval(timerRef.current);
+      loadFeed((signal) => fetchAircraftByCallsign(query.trim(), signal), "Search failed.");
+    },
+    [loadFeed, reload]
   );
 
   const handleBoundsChange = useCallback(
@@ -96,11 +111,9 @@ export default function TrackingPage() {
       boundsRef.current = bounds;
       loadForBounds(bounds);
       if (timerRef.current) clearInterval(timerRef.current);
-      timerRef.current = setInterval(() => {
-        if (boundsRef.current) loadForBounds(boundsRef.current);
-      }, 60000);
+      timerRef.current = setInterval(reload, 60000);
     },
-    [loadForBounds]
+    [loadForBounds, reload]
   );
 
   const handleSelect = useCallback(async (ac: AircraftState | null) => {
@@ -139,6 +152,7 @@ export default function TrackingPage() {
     });
   }, []);
 
+  const aircraft = feed.status === "live" ? feed.aircraft : NO_AIRCRAFT;
   const selected =
     selection && (aircraft.find((a) => a.icao24 === selection.icao24) ?? selection.snapshot);
 
@@ -185,7 +199,7 @@ export default function TrackingPage() {
               onClick={() => {
                 setSearchQuery("");
                 setSearchMode(false);
-                if (boundsRef.current) loadForBounds(boundsRef.current);
+                reload();
               }}
               className="text-[11px] text-slate-400 dark:text-slate-500 hover:text-slate-900 dark:hover:text-white px-1.5 py-0.5 rounded transition-colors shrink-0"
             >
@@ -195,6 +209,8 @@ export default function TrackingPage() {
         </form>
         <ThemeToggle />
       </div>
+
+      {feed.status !== "live" && <FirstLoadOverlay feed={feed} onRetry={retryFirstLoad} />}
 
       {/* ============ LEFT DETAIL PANEL (desktop) / BOTTOM SHEET (mobile) ============ */}
       {selected && (
@@ -354,37 +370,48 @@ export default function TrackingPage() {
       )}
 
       {/* ============ BOTTOM LIVE BAR ============ */}
-      <div
-        className={`absolute left-1/2 -translate-x-1/2 z-[900] transition-all duration-200 ${
-          selected ? "bottom-[62vh] md:bottom-4" : "bottom-4"
-        }`}
-      >
-        <div className="flex items-center gap-3 px-4 py-2 rounded-xl bg-white/95 dark:bg-[#161920]/95 backdrop-blur-xl border border-black/10 dark:border-white/10 text-[11.5px] shadow-lg">
-          <span className="flex items-center gap-1.5 text-fr24-yellow font-semibold tracking-[0.08em]">
-            <span className="w-[6px] h-[6px] rounded-full bg-fr24-yellow shadow-[0_0_6px_#FBD200] animate-blink" />
-            LIVE
-          </span>
-          <span className="text-slate-300 dark:text-slate-600">·</span>
-          <span className="text-slate-600 dark:text-slate-300">
-            <strong className="text-slate-900 dark:text-white font-semibold">
-              {count.toLocaleString()}
-            </strong>
-            {" aircraft"}
-            {searchMode && " found"}
-          </span>
-          {lastUpdate && !loading && (
-            <>
-              <span className="text-slate-300 dark:text-slate-600 hidden sm:inline">·</span>
+      {feed.status === "live" && (
+        <div
+          className={`absolute left-1/2 -translate-x-1/2 z-[900] transition-all duration-200 ${
+            selected ? "bottom-[62vh] md:bottom-4" : "bottom-4"
+          }`}
+        >
+          <div className="flex items-center gap-3 px-4 py-2 rounded-xl bg-white/95 dark:bg-[#161920]/95 backdrop-blur-xl border border-black/10 dark:border-white/10 text-[11.5px] shadow-lg">
+            <span className="flex items-center gap-1.5 text-fr24-yellow font-semibold tracking-[0.08em]">
+              <span className="w-[6px] h-[6px] rounded-full bg-fr24-yellow shadow-[0_0_6px_#FBD200] animate-blink" />
+              LIVE
+            </span>
+            <span className="text-slate-300 dark:text-slate-600">·</span>
+            <span className="text-slate-600 dark:text-slate-300">
+              <strong className="text-slate-900 dark:text-white font-semibold">
+                {feed.aircraft.length.toLocaleString()}
+              </strong>
+              {" aircraft"}
+              {searchMode && " found"}
+            </span>
+            <span className="text-slate-300 dark:text-slate-600 hidden sm:inline">·</span>
+            {feed.refreshing ? (
+              <span className="text-fr24-yellow animate-pulse">updating…</span>
+            ) : (
               <span className="text-slate-500 dark:text-slate-400 hidden sm:inline">
                 updated{" "}
                 <strong className="text-slate-900 dark:text-white font-medium">
-                  {lastUpdate}
+                  {feed.updatedAt.toLocaleTimeString()}
                 </strong>
               </span>
-            </>
-          )}
+            )}
+            {feed.staleError && (
+              <>
+                <span className="text-slate-300 dark:text-slate-600">·</span>
+                <span className="text-slate-500 dark:text-slate-400">Update failed</span>
+                <button onClick={reload} className="text-fr24-orange font-medium hover:underline">
+                  Retry
+                </button>
+              </>
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </main>
   );
 }

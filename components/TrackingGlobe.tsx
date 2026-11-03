@@ -150,16 +150,14 @@ export default function TrackingMap({
 
       mapRef.current = map;
 
-      // Single debounced emitter — prevents double-fire on init
+      // The first request must not wait out the pan debounce.
+      map.whenReady(emitBounds);
+
       let moveTimer: ReturnType<typeof setTimeout>;
-      const debouncedEmit = () => {
+      map.on("moveend", () => {
+        if (isFlyingRef.current) return;
         clearTimeout(moveTimer);
         moveTimer = setTimeout(emitBounds, 2000);
-      };
-
-      map.whenReady(() => debouncedEmit());
-      map.on("moveend", () => {
-        if (!isFlyingRef.current) debouncedEmit();
       });
     })();
 
