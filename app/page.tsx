@@ -26,7 +26,7 @@ const TrackingMap = dynamic(() => import("@/components/TrackingGlobe"), {
 type Selection = { icao24: string; snapshot: AircraftState } | null;
 
 const NO_AIRCRAFT: AircraftState[] = [];
-// A cold backend can take 20 s; past this the request is a failure, not a wait.
+// A cold backend on Vercel can take 20 s; past this the request is a failure, not a wait.
 const FETCH_TIMEOUT_MS = 45_000;
 
 export default function TrackingPage() {
@@ -42,7 +42,6 @@ export default function TrackingPage() {
   const boundsRef = useRef<Bounds | null>(null);
   const selectedIcaoRef = useRef<string | null>(null);
 
-  // The only writer of `feed`. A newer request supersedes the previous one silently.
   const loadFeed = useCallback(
     async (request: (signal: AbortSignal) => Promise<AircraftResponse>, failMessage: string) => {
       fetchRef.current?.abort();
@@ -128,7 +127,6 @@ export default function TrackingPage() {
     setSelection({ icao24, snapshot: ac });
     setRoute({ icao24, status: "loading", path: [], departure: null, arrival: null, arrivalCoords: null });
 
-    // A late response for a previously selected plane must not touch the current route.
     const patchRoute = (patch: Partial<Route>) =>
       setRoute((r) => (r?.icao24 === icao24 ? { ...r, ...patch } : r));
 

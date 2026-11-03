@@ -150,7 +150,6 @@ export default function TrackingMap({
 
       mapRef.current = map;
 
-      // The first request must not wait out the pan debounce.
       map.whenReady(emitBounds);
 
       let moveTimer: ReturnType<typeof setTimeout>;
@@ -166,7 +165,6 @@ export default function TrackingMap({
     };
   }, [emitBounds]);
 
-  // --- Draw aircraft: diff markers by icao24 so tooltips and hover survive a refresh ---
   useEffect(() => {
     const L = LRef.current;
     const layer = planeLayerRef.current;
@@ -232,7 +230,6 @@ export default function TrackingMap({
     });
   }, [aircraft, selected]);
 
-  // --- Draw track + labels ---
   useEffect(() => {
     const L = LRef.current;
     const layer = trackLayerRef.current;
@@ -310,7 +307,6 @@ export default function TrackingMap({
     }
   }, [route, selected?.latitude, selected?.longitude]);
 
-  // --- Fly to the route once it is ready (a feed refresh never re-flies) ---
   useEffect(() => {
     const L = LRef.current;
     const map = mapRef.current;

@@ -2,7 +2,6 @@ import type { TrackWaypoint } from "./types";
 
 export type LatLng = { lat: number; lng: number };
 
-// Shift lng by multiples of 360 so it lands within 180 of ref.
 export function unwrapLng(lng: number, ref: number): number {
   let cur = lng;
   while (cur - ref > 180) cur -= 360;
@@ -10,9 +9,7 @@ export function unwrapLng(lng: number, ref: number): number {
   return cur;
 }
 
-// Airborne waypoints in time order, longitudes unwrapped across the antimeridian
-// (e.g. ICN to LAX over the Pacific). `live` is the plane's current position:
-// the trace lags it, so it becomes the last vertex.
+// `live` is the current position: the trace lags it, so it becomes the last vertex.
 export function trackLine(path: TrackWaypoint[], live: LatLng | null): LatLng[] {
   const line: LatLng[] = [];
   const airborne = path
