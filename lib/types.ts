@@ -49,3 +49,19 @@ export interface AircraftInfo {
   built: string | null;
   categoryDescription: string | null;
 }
+
+export type Bounds = {
+  lamin: number;
+  lomin: number;
+  lamax: number;
+  lomax: number;
+};
+
+export interface Route {
+  icao24: string;
+  status: "loading" | "ready" | "failed";
+  path: TrackWaypoint[];
+  departure: string | null;
+  arrival: string | null;
+  arrivalCoords: { lat: number; lng: number } | null;
+}

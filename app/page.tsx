@@ -2,7 +2,7 @@
 
 import { useState, useRef, useCallback } from "react";
 import dynamic from "next/dynamic";
-import { AircraftInfo, AircraftState, TrackWaypoint } from "@/lib/types";
+import { AircraftInfo, AircraftState, Bounds, Route } from "@/lib/types";
 import {
   fetchAircraft,
   fetchAircraftByCallsign,
@@ -21,37 +21,28 @@ const TrackingMap = dynamic(() => import("@/components/TrackingGlobe"), {
   ),
 });
 
-type Bounds = {
-  lamin: number;
-  lomin: number;
-  lamax: number;
-  lomax: number;
-};
-
 // FR24-style top-down plane silhouette (nose up)
 const PLANE_PATH =
   "M16 2 C 15.4 2 14.8 2.7 14.6 4 L 14 10 L 2 15.5 L 2 17.5 L 14 15 L 13.7 22 L 9.5 24 L 9.5 25.5 L 16 24 L 22.5 25.5 L 22.5 24 L 18.3 22 L 18 15 L 30 17.5 L 30 15.5 L 18 10 L 17.4 4 C 17.2 2.7 16.6 2 16 2 Z";
 
+type Selection = { icao24: string; snapshot: AircraftState } | null;
+
 export default function TrackingPage() {
   const [aircraft, setAircraft] = useState<AircraftState[]>([]);
-  const [selected, setSelected] = useState<AircraftState | null>(null);
-  const [trackPath, setTrackPath] = useState<TrackWaypoint[]>([]);
-  const [trackLoading, setTrackLoading] = useState(false);
+  const [selection, setSelection] = useState<Selection>(null);
+  const [route, setRoute] = useState<Route | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdate, setLastUpdate] = useState("");
   const [count, setCount] = useState(0);
-  const [departureAirport, setDepartureAirport] = useState<string | null>(null);
-  const [arrivalAirport, setArrivalAirport] = useState<string | null>(null);
-  const [arrivalCoords, setArrivalCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchMode, setSearchMode] = useState(false);
   const [aircraftInfo, setAircraftInfo] = useState<AircraftInfo | null | undefined>(undefined);
-  const [infoLoading, setInfoLoading] = useState(false);
 
   const fetchRef = useRef<AbortController | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const boundsRef = useRef<Bounds | null>(null);
+  const selectedIcaoRef = useRef<string | null>(null);
 
   // Load aircraft for given bounds
   const loadForBounds = useCallback(async (bounds: Bounds) => {
@@ -113,52 +104,52 @@ export default function TrackingPage() {
   );
 
   const handleSelect = useCallback(async (ac: AircraftState | null) => {
-    setSelected(ac);
-    setDepartureAirport(null);
-    setArrivalAirport(null);
-    setArrivalCoords(null);
+    selectedIcaoRef.current = ac?.icao24 ?? null;
     setAircraftInfo(undefined);
     if (!ac) {
-      setTrackPath([]);
+      setSelection(null);
+      setRoute(null);
       return;
     }
-    setTrackLoading(true);
-    setInfoLoading(true);
-    try {
-      const track = await fetchTrack(ac.icao24);
-      setTrackPath(track.path);
-      setDepartureAirport(track.estDepartureAirport ?? null);
-      setArrivalAirport(track.estArrivalAirport ?? null);
-      if (track.estArrivalAirport) {
-        fetchAirport(track.estArrivalAirport).then((airport) => {
-          if (airport) setArrivalCoords({ lat: airport.lat, lng: airport.lng });
+    const icao24 = ac.icao24;
+    setSelection({ icao24, snapshot: ac });
+    setRoute({ icao24, status: "loading", path: [], departure: null, arrival: null, arrivalCoords: null });
+
+    // A late response for a previously selected plane must not touch the current route.
+    const patchRoute = (patch: Partial<Route>) =>
+      setRoute((r) => (r?.icao24 === icao24 ? { ...r, ...patch } : r));
+
+    fetchTrack(icao24)
+      .then((track) => {
+        patchRoute({
+          status: "ready",
+          path: track.path,
+          departure: track.estDepartureAirport ?? null,
+          arrival: track.estArrivalAirport ?? null,
         });
-      }
-    } catch {
-      setTrackPath([]);
-    } finally {
-      setTrackLoading(false);
-    }
-    fetchAircraftInfo(ac.icao24).then((info) => {
-      setAircraftInfo(info);
-      setInfoLoading(false);
+        if (track.estArrivalAirport) {
+          fetchAirport(track.estArrivalAirport).then((airport) => {
+            if (airport) patchRoute({ arrivalCoords: { lat: airport.lat, lng: airport.lng } });
+          });
+        }
+      })
+      .catch(() => patchRoute({ status: "failed" }));
+    fetchAircraftInfo(icao24).then((info) => {
+      if (selectedIcaoRef.current === icao24) setAircraftInfo(info);
     });
   }, []);
 
-  const airborne = trackPath.filter((wp) => !wp.onGround);
-  const hasRoute = airborne.length > 0 && (departureAirport || arrivalAirport);
+  const selected =
+    selection && (aircraft.find((a) => a.icao24 === selection.icao24) ?? selection.snapshot);
 
   return (
     <main className="relative w-screen h-screen overflow-hidden bg-slate-100 dark:bg-[#14161a]">
       <TrackingMap
         aircraft={aircraft}
-        trackPath={trackPath}
-        selectedIcao={selected?.icao24 ?? null}
+        selected={selected}
+        route={route}
         onSelectAircraft={handleSelect}
         onBoundsChange={handleBoundsChange}
-        departureAirport={departureAirport}
-        arrivalAirport={arrivalAirport}
-        arrivalCoords={arrivalCoords}
       />
 
       {/* ============ TOP FLOATING BAR ============ */}
@@ -245,11 +236,15 @@ export default function TrackingPage() {
               </div>
 
               {/* Route + progress */}
-              {hasRoute ? (
+              {route?.status === "loading" ? (
+                <div className="text-[12px] text-slate-400 dark:text-slate-500">Loading flight path…</div>
+              ) : route?.status === "failed" ? (
+                <div className="text-[12px] text-slate-400 dark:text-slate-500">Flight path unavailable</div>
+              ) : route && (route.departure || route.arrival) ? (
                 <div className="grid grid-cols-[auto_1fr_auto] items-end gap-3">
                   <div>
                     <div className="text-[22px] font-bold tracking-tight text-fr24-yellow leading-none">
-                      {departureAirport || "---"}
+                      {route.departure || "---"}
                     </div>
                     <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400 dark:text-slate-500 mt-1">
                       Departure
@@ -259,16 +254,12 @@ export default function TrackingPage() {
                   </div>
                   <div>
                     <div className="text-[22px] font-bold tracking-tight text-fr24-orange leading-none text-right">
-                      {arrivalAirport || "---"}
+                      {route.arrival || "---"}
                     </div>
                     <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400 dark:text-slate-500 mt-1 text-right">
                       Arrival
                     </div>
                   </div>
-                </div>
-              ) : trackLoading ? (
-                <div className="text-[12px] text-fr24-yellow animate-pulse text-center py-2">
-                  Loading flight path…
                 </div>
               ) : null}
 
@@ -326,16 +317,16 @@ export default function TrackingPage() {
               </div>
 
               {/* Aircraft details */}
-              {(aircraftInfo || infoLoading) && (
+              {aircraftInfo !== null && (
                 <div className="pt-3 border-t border-black/[0.08] dark:border-white/[0.08]">
                   <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400 dark:text-slate-500 mb-2">
                     Aircraft
                   </div>
-                  {infoLoading ? (
-                    <div className="text-[11px] text-fr24-yellow animate-pulse">
+                  {aircraftInfo === undefined ? (
+                    <div className="text-[12px] text-slate-400 dark:text-slate-500">
                       Loading aircraft details…
                     </div>
-                  ) : aircraftInfo ? (
+                  ) : (
                     <div>
                       {aircraftInfo.registration && (
                         <MetaRow k="Registration" v={aircraftInfo.registration} mono />
@@ -353,10 +344,6 @@ export default function TrackingPage() {
                       {aircraftInfo.categoryDescription && (
                         <MetaRow k="Category" v={aircraftInfo.categoryDescription} />
                       )}
-                    </div>
-                  ) : (
-                    <div className="text-[11px] text-slate-400 dark:text-slate-500">
-                      No aircraft details available
                     </div>
                   )}
                 </div>

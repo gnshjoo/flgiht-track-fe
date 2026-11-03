@@ -2,33 +2,23 @@
 
 import { useEffect, useRef, useCallback } from "react";
 import type { Map as LeafletMap, LayerGroup, TileLayer } from "leaflet";
-import { AircraftState, TrackWaypoint } from "@/lib/types";
+import { AircraftState, Bounds, Route } from "@/lib/types";
+import { trackLine, unwrapLng } from "@/lib/track";
 
 interface Props {
   aircraft: AircraftState[];
-  trackPath: TrackWaypoint[];
-  selectedIcao: string | null;
+  selected: AircraftState | null;
+  route: Route | null;
   onSelectAircraft: (aircraft: AircraftState | null) => void;
-  onBoundsChange: (bounds: {
-    lamin: number;
-    lomin: number;
-    lamax: number;
-    lomax: number;
-  }) => void;
-  departureAirport: string | null;
-  arrivalAirport: string | null;
-  arrivalCoords: { lat: number; lng: number } | null;
+  onBoundsChange: (bounds: Bounds) => void;
 }
 
 export default function TrackingMap({
   aircraft,
-  trackPath,
-  selectedIcao,
+  selected,
+  route,
   onSelectAircraft,
   onBoundsChange,
-  departureAirport,
-  arrivalAirport,
-  arrivalCoords,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<LeafletMap | null>(null);
@@ -42,12 +32,8 @@ export default function TrackingMap({
   const onBoundsRef = useRef(onBoundsChange);
   onBoundsRef.current = onBoundsChange;
   const isFlyingRef = useRef(false);
-  const depAirportRef = useRef(departureAirport);
-  depAirportRef.current = departureAirport;
-  const arrAirportRef = useRef(arrivalAirport);
-  arrAirportRef.current = arrivalAirport;
-  const arrCoordsRef = useRef(arrivalCoords);
-  arrCoordsRef.current = arrivalCoords;
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
 
   // Emit current bounds
   const emitBounds = useCallback(() => {
@@ -153,14 +139,12 @@ export default function TrackingMap({
     layer.clearLayers();
 
     // 선택된 비행기가 있으면 해당 비행기만 표시
-    const visible = selectedIcao
-      ? aircraft.filter((ac) => ac.icao24 === selectedIcao)
-      : aircraft;
+    const visible = selected ? [selected] : aircraft;
 
     const isMobile = window.matchMedia("(max-width: 768px)").matches;
 
     visible.forEach((ac) => {
-      const sel = ac.icao24 === selectedIcao;
+      const sel = ac.icao24 === selected?.icao24;
       const color = sel ? "#FF7A00" : "#FBD200";
       const sz = sel ? 28 : isMobile ? 26 : 20;
       const glow = sel
@@ -203,7 +187,7 @@ export default function TrackingMap({
 
       m.on("click", () => {
         // 이미 선택된 비행기를 다시 클릭하면 선택 해제
-        if (ac.icao24 === selectedIcao) {
+        if (sel) {
           onSelectRef.current(null);
         } else {
           onSelectRef.current(ac);
@@ -211,43 +195,23 @@ export default function TrackingMap({
       });
       layer.addLayer(m);
     });
-  }, [aircraft, selectedIcao]);
+  }, [aircraft, selected]);
 
-  // --- Draw track + labels (single unified effect) ---
+  // --- Draw track + labels ---
   useEffect(() => {
     const L = LRef.current;
     const layer = trackLayerRef.current;
     if (!L || !layer) return;
 
     layer.clearLayers();
+    if (!route) return;
 
-    // 시간순 정렬 + 중복 제거
-    const airborne = trackPath
-      .filter((wp) => !wp.onGround)
-      .sort((a, b) => a.time - b.time)
-      .filter((wp, i, arr) =>
-        i === 0 || wp.latitude !== arr[i - 1].latitude || wp.longitude !== arr[i - 1].longitude
-      );
-    if (airborne.length < 2) return;
-
-    // Unwrap longitudes across the antimeridian (e.g. ICN→LAX via Pacific)
-    const unwrappedLngs: number[] = [];
-    for (let i = 0; i < airborne.length; i++) {
-      if (i === 0) {
-        unwrappedLngs.push(airborne[i].longitude);
-      } else {
-        const prev = unwrappedLngs[i - 1];
-        let cur = airborne[i].longitude;
-        let diff = cur - prev;
-        while (diff > 180) { cur -= 360; diff = cur - prev; }
-        while (diff < -180) { cur += 360; diff = cur - prev; }
-        unwrappedLngs.push(cur);
-      }
-    }
-
-    const latlngs = airborne.map(
-      (wp, i) => L.latLng(wp.latitude, unwrappedLngs[i])
-    );
+    const sel = selectedRef.current;
+    const live =
+      sel && sel.icao24 === route.icao24 ? { lat: sel.latitude, lng: sel.longitude } : null;
+    const line = trackLine(route.path, live);
+    if (line.length < 2) return;
+    const latlngs = line.map((p) => L.latLng(p.lat, p.lng));
 
     // Traveled path - Glow (FR24 yellow halo)
     L.polyline(latlngs, {
@@ -268,9 +232,9 @@ export default function TrackingMap({
     }).addTo(layer);
 
     // Departure airport marker — FR24 classic: yellow dot + label chip
-    const dep = airborne[0];
-    const depLabel = departureAirport || "DEP";
-    L.marker([dep.latitude, dep.longitude], {
+    const dep = line[0];
+    const depLabel = route.departure ?? "DEP";
+    L.marker([dep.lat, dep.lng], {
       icon: L.divIcon({
         className: "",
         iconSize: [12, 12],
@@ -282,21 +246,12 @@ export default function TrackingMap({
     }).addTo(layer);
 
     // 현재 위치 → 도착 공항 예상 경로 (연하게)
-    const cur = airborne[airborne.length - 1];
-    if (arrivalCoords) {
-      const lastUnwrappedLng = unwrappedLngs[unwrappedLngs.length - 1];
-      let arrLng = arrivalCoords.lng;
-      let diff = arrLng - lastUnwrappedLng;
-      while (diff > 180) { arrLng -= 360; diff = arrLng - lastUnwrappedLng; }
-      while (diff < -180) { arrLng += 360; diff = arrLng - lastUnwrappedLng; }
-
-      const projectedLatLngs = [
-        L.latLng(cur.latitude, lastUnwrappedLng),
-        L.latLng(arrivalCoords.lat, arrLng),
-      ];
+    if (route.arrivalCoords) {
+      const cur = line[line.length - 1];
+      const arrLng = unwrapLng(route.arrivalCoords.lng, cur.lng);
 
       // Projected route - dashed FR24 orange, faint
-      L.polyline(projectedLatLngs, {
+      L.polyline([L.latLng(cur.lat, cur.lng), L.latLng(route.arrivalCoords.lat, arrLng)], {
         color: "#FF7A00",
         weight: 2,
         opacity: 0.5,
@@ -306,8 +261,8 @@ export default function TrackingMap({
       }).addTo(layer);
 
       // Arrival airport marker — FR24 orange
-      const arrLabel = arrivalAirport || "ARR";
-      L.marker([arrivalCoords.lat, arrLng], {
+      const arrLabel = route.arrival ?? "ARR";
+      L.marker([route.arrivalCoords.lat, arrLng], {
         icon: L.divIcon({
           className: "",
           iconSize: [12, 12],
@@ -317,42 +272,39 @@ export default function TrackingMap({
         interactive: false,
         zIndexOffset: 900,
       }).addTo(layer);
-    } else {
-      // No arrival coords — show current position marker in orange
-      L.marker([cur.latitude, cur.longitude], {
-        icon: L.divIcon({
-          className: "",
-          iconSize: [12, 12],
-          iconAnchor: [6, 6],
-          html: `<div style="position:relative"><div style="width:10px;height:10px;border:2px solid #fff;background:#FF7A00;border-radius:50%;box-shadow:0 0 0 2px rgba(0,0,0,.6)"></div><div style="position:absolute;top:14px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.75);color:#FF7A00;font-size:10px;font-weight:600;padding:2px 6px;border-radius:3px;white-space:nowrap;letter-spacing:0.04em">${arrivalAirport ? `→ ${arrivalAirport}` : "Current"}</div></div>`,
-        }),
-        interactive: false,
-        zIndexOffset: 900,
-      }).addTo(layer);
+    }
+  }, [route, selected?.latitude, selected?.longitude]);
+
+  // --- Fly to the route once it is ready (a feed refresh never re-flies) ---
+  useEffect(() => {
+    const L = LRef.current;
+    const map = mapRef.current;
+    if (!L || !map || route?.status !== "ready") return;
+
+    const sel = selectedRef.current;
+    const live =
+      sel && sel.icao24 === route.icao24 ? { lat: sel.latitude, lng: sel.longitude } : null;
+    const line = trackLine(route.path, live);
+    if (line.length < 2) return;
+    const points = line.map((p) => L.latLng(p.lat, p.lng));
+    if (route.arrivalCoords) {
+      points.push(
+        L.latLng(route.arrivalCoords.lat, unwrapLng(route.arrivalCoords.lng, line[line.length - 1].lng))
+      );
     }
 
-    // Fly map to track bounds
     isFlyingRef.current = true;
-    const allLatLngs = arrivalCoords
-      ? [...latlngs, L.latLng(arrivalCoords.lat, arrivalCoords.lng)]
-      : latlngs;
-    const bounds = L.latLngBounds(allLatLngs);
-    const map = mapRef.current;
-    if (map) {
-      const isMobileFly = window.matchMedia("(max-width: 768px)").matches;
-      // Account for fixed overlays: desktop left panel (~360px) + top bar (~60px);
-      // mobile bottom sheet covers ~60vh.
-      map.flyToBounds(bounds, {
-        paddingTopLeft: isMobileFly ? [40, 80] : [390, 90],
-        paddingBottomRight: isMobileFly
-          ? [40, Math.round(window.innerHeight * 0.6)]
-          : [80, 80],
-        maxZoom: 8,
-        duration: 1,
-      });
-      setTimeout(() => { isFlyingRef.current = false; }, 1200);
-    }
-  }, [trackPath, arrivalCoords, departureAirport, arrivalAirport]);
+    const isMobileFly = window.matchMedia("(max-width: 768px)").matches;
+    // Account for fixed overlays: desktop left panel (~360px) + top bar (~60px);
+    // mobile bottom sheet covers ~60vh.
+    map.flyToBounds(L.latLngBounds(points), {
+      paddingTopLeft: isMobileFly ? [40, 80] : [390, 90],
+      paddingBottomRight: isMobileFly ? [40, Math.round(window.innerHeight * 0.6)] : [80, 80],
+      maxZoom: 8,
+      duration: 1,
+    });
+    setTimeout(() => { isFlyingRef.current = false; }, 1200);
+  }, [route]);
 
   return (
     <div
